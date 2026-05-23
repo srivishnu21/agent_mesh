@@ -1,4 +1,4 @@
-import { Bot, GripVertical, Plus, Search, Send, ShoppingCart, Table2, Wrench } from "lucide-react";
+import { Bot, CircleCheckBig, GripVertical, Plus, Search, Send, ShoppingCart, Table2, Wrench } from "lucide-react";
 
 import type { Agent } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,21 @@ export function AgentPalette({ agents, onNewAgent }: { agents: Agent[]; onNewAge
             </div>
           </div>
         ))}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold">Flow control</h2>
+        <div
+          draggable
+          onDragStart={(event) => event.dataTransfer.setData("application/end-node", "1")}
+          className="flex cursor-grab items-start gap-2 rounded-md border border-orange-200 bg-orange-50 p-2 text-sm text-orange-900 active:cursor-grabbing"
+        >
+          <CircleCheckBig className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0">
+            <div className="font-medium">END</div>
+            <div className="line-clamp-2 text-xs text-orange-700">Terminal sink. Connect from an agent to explicitly complete the workflow on a route.</div>
+          </div>
+        </div>
       </section>
 
       <section className="space-y-2">

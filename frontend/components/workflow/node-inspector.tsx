@@ -4,20 +4,177 @@ import { Trash2 } from "lucide-react";
 import type { Agent, Workflow } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { END_NODE_ID } from "@/components/workflow/end-node";
+
+export type EdgeCondition = { route_equals?: string; always?: boolean };
+export type EdgeData = { condition?: EdgeCondition; label?: string; feedback?: boolean };
+
+const FEEDBACK_DEFAULT_ROUTE = "revise";
+
+type AgentNodeData = { agent?: Agent };
+
+function nodeLabel(node: Node<AgentNodeData> | undefined, fallback: string) {
+  if (!node) return fallback;
+  if (node.id === END_NODE_ID) return "END";
+  return node.data?.agent?.name ?? fallback;
+}
 
 export function NodeInspector({
   workflow,
   selectedNode,
+  selectedEdge,
+  nodes,
   onWorkflowChange,
-  onRemoveNode
+  onRemoveNode,
+  onEdgeChange,
+  onRemoveEdge
 }: {
   workflow: Workflow | null;
-  selectedNode: Node<{ agent?: Agent }> | null;
-  edges: Edge[];
+  selectedNode: Node<AgentNodeData> | null;
+  selectedEdge: Edge<EdgeData> | null;
+  nodes: Node<AgentNodeData>[];
+  edges: Edge<EdgeData>[];
   onWorkflowChange: (patch: Partial<Workflow>) => void;
   onRemoveNode: (id: string) => void;
+  onEdgeChange: (id: string, data: EdgeData) => void;
+  onRemoveEdge: (id: string) => void;
 }) {
+  if (selectedEdge) {
+    const condition = selectedEdge.data?.condition ?? {};
+    const label = selectedEdge.data?.label ?? "";
+    const feedback = !!selectedEdge.data?.feedback;
+    const sourceNode = nodes.find((node) => node.id === selectedEdge.source);
+    const targetNode = nodes.find((node) => node.id === selectedEdge.target);
+    const sourceName = nodeLabel(sourceNode, selectedEdge.source);
+    const targetName = nodeLabel(targetNode, selectedEdge.target);
+    const targetIsEnd = selectedEdge.target === END_NODE_ID;
+    const mode: "straight" | "route" | "always" = condition.always
+      ? "always"
+      : typeof condition.route_equals === "string"
+        ? "route"
+        : "straight";
+
+    function setMode(value: string) {
+      if (value === "straight") onEdgeChange(selectedEdge!.id, { label, condition: undefined, feedback });
+      else if (value === "always") onEdgeChange(selectedEdge!.id, { label: label || "default", condition: { always: true }, feedback });
+      else onEdgeChange(selectedEdge!.id, { label: label || "route", condition: { route_equals: condition.route_equals ?? "" }, feedback });
+    }
+
+    function setRoute(value: string) {
+      onEdgeChange(selectedEdge!.id, {
+        label: label || value || "route",
+        condition: { route_equals: value },
+        feedback
+      });
+    }
+
+    function setLabel(value: string) {
+      onEdgeChange(selectedEdge!.id, {
+        label: value,
+        condition: condition.always || condition.route_equals != null ? condition : undefined,
+        feedback
+      });
+    }
+
+    function toggleFeedback(next: boolean) {
+      if (next) {
+        // One-click feedback loop: make conditional with sensible defaults.
+        const route = condition.route_equals && condition.route_equals.trim() ? condition.route_equals : FEEDBACK_DEFAULT_ROUTE;
+        onEdgeChange(selectedEdge!.id, {
+          label: label || route,
+          condition: { route_equals: route },
+          feedback: true
+        });
+      } else {
+        onEdgeChange(selectedEdge!.id, { label, condition, feedback: false });
+      }
+    }
+
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold">Edge</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            <span className="font-medium">{sourceName}</span> {feedback ? "⇄" : "→"} <span className="font-medium">{targetName}</span>
+          </p>
+          {targetIsEnd && (
+            <p className="mt-1 text-xs text-orange-700">
+              Targets END — completes the run when this edge fires.
+            </p>
+          )}
+        </div>
+        <label className="flex items-start gap-3 rounded-md border-2 border-purple-200 bg-purple-50 p-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-purple-600"
+            checked={feedback}
+            onChange={(event) => toggleFeedback(event.target.checked)}
+          />
+          <span className="space-y-0.5">
+            <span className="block font-semibold text-purple-900">Feedback loop</span>
+            <span className="block text-xs text-purple-800">
+              One-click loop-back. Renders as double-arrow. Auto-sets edge to conditional with{" "}
+              <code className="rounded bg-purple-100 px-1">ROUTE: {condition.route_equals?.trim() || FEEDBACK_DEFAULT_ROUTE}</code>{" "}
+              from the source agent.
+            </span>
+          </span>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span>Edge type</span>
+          <Select value={mode} onChange={(event) => setMode(event.target.value)} disabled={feedback}>
+            <option value="straight">Straight — always runs after source</option>
+            <option value="route">Conditional — match agent ROUTE</option>
+            <option value="always">Catch-all — fires when no other route matches</option>
+          </Select>
+          {feedback && (
+            <span className="text-xs text-muted-foreground">Feedback loops are always conditional. Uncheck Feedback to change.</span>
+          )}
+        </label>
+        {mode === "route" && (
+          <label className="space-y-1 text-sm">
+            <span>Match when ROUTE equals</span>
+            <Input
+              value={condition.route_equals ?? ""}
+              placeholder={feedback ? FEEDBACK_DEFAULT_ROUTE : "billing"}
+              onChange={(event) => setRoute(event.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              Source agent must emit a line like <code className="rounded bg-muted px-1">ROUTE: {condition.route_equals?.trim() || (feedback ? FEEDBACK_DEFAULT_ROUTE : "billing")}</code> for this edge to fire.
+            </span>
+          </label>
+        )}
+        <label className="space-y-1 text-sm">
+          <span>Label</span>
+          <Input value={label} placeholder="optional" onChange={(event) => setLabel(event.target.value)} />
+          <span className="text-xs text-muted-foreground">Shown on the canvas. Helpful for routing edges.</span>
+        </label>
+        <Button className="w-full border bg-background text-foreground" onClick={() => onRemoveEdge(selectedEdge.id)}>
+          <Trash2 className="mr-2 h-4 w-4" />
+          Delete edge
+        </Button>
+      </div>
+    );
+  }
+
+  if (selectedNode?.id === END_NODE_ID) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold">END</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Terminal sink. Any incoming edge that fires here completes the run. Connect from an agent (or a conditional edge) to finish the workflow explicitly — useful when other edges loop back.
+          </p>
+        </div>
+        <Button className="w-full border bg-background text-foreground" onClick={() => onRemoveNode(selectedNode.id)}>
+          <Trash2 className="mr-2 h-4 w-4" />
+          Remove END
+        </Button>
+      </div>
+    );
+  }
+
   if (selectedNode?.data.agent) {
     const agent = selectedNode.data.agent;
     return (
@@ -53,6 +210,9 @@ export function NodeInspector({
         <span>Description</span>
         <Textarea value={workflow?.description ?? ""} onChange={(event) => onWorkflowChange({ description: event.target.value })} />
       </label>
+      <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+        Click any edge on the canvas to edit its condition (straight, conditional, or catch-all) and label.
+      </div>
     </div>
   );
 }

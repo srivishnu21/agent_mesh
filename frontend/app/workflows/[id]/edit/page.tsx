@@ -4,24 +4,26 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import ReactFlow, {
   Background,
   Controls,
+  MarkerType,
   MiniMap,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
   type Connection,
   type Edge,
+  type EdgeChange,
   type Node,
-  type NodeChange,
-  type EdgeChange
+  type NodeChange
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { ArrowLeft, GitBranch, Play, RefreshCcw, Save } from "lucide-react";
+import { ArrowLeft, Play, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { AgentNode } from "@/components/workflow/agent-node";
 import { AgentPalette } from "@/components/workflow/agent-palette";
-import { NodeInspector } from "@/components/workflow/node-inspector";
+import { EndNode, END_ALIASES, END_NODE_ID } from "@/components/workflow/end-node";
+import { NodeInspector, type EdgeData } from "@/components/workflow/node-inspector";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
@@ -30,12 +32,11 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api-client";
 import type { Agent, AgentCreate, Model, Workflow } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
-const FEEDBACK_EDGE_PREFIX = "__workflow_feedback_edge__";
+const nodeTypes = { agent: AgentNode, end: EndNode };
 
-const nodeTypes = { agent: AgentNode };
 type AgentNodeData = { agent?: Agent; flowRole?: "start" | "end" | "start_end" };
+
 const customAgentDefaults: AgentCreate = {
   name: "",
   role: "",
@@ -46,38 +47,118 @@ const customAgentDefaults: AgentCreate = {
   channels: ["internal"]
 };
 
-function validateGraph(nodes: Node[], edges: Edge[]) {
-  if (!nodes.length) return "Add at least one agent node before saving.";
-  const incoming = new Set(edges.map((edge) => edge.target));
-  const sources = nodes.filter((node) => !incoming.has(node.id));
-  if (sources.length !== 1) return "Workflow must have exactly one source node.";
-  const orphan = nodes.find((node) => node.id !== sources[0].id && !incoming.has(node.id));
-  if (orphan) return "Every non-source node needs an incoming edge.";
-  return null;
-}
+type RawEdge = {
+  from: string;
+  to: string;
+  condition?: { route_equals?: string; always?: boolean } | null;
+  label?: string | null;
+  ui?: { feedback?: boolean } | null;
+};
 
-function feedbackEdgeId(source: string, target: string) {
-  return `${FEEDBACK_EDGE_PREFIX}${source}__${target}`;
-}
+type RawGraph = {
+  nodes?: Array<{ id: string; agent_id: string; position?: { x: number; y: number } }>;
+  edges?: RawEdge[];
+};
 
-function isFeedbackEdgeChange(change: EdgeChange) {
-  return "id" in change && change.id.startsWith(FEEDBACK_EDGE_PREFIX);
-}
+const ROUTE_COLOR = "#d97706";
+const ALWAYS_COLOR = "#64748b";
+const END_COLOR = "#ea580c";
+const FEEDBACK_COLOR = "#7c3aed";
 
-function feedbackEdge(source: string, target: string): Edge {
-  const isBackward = source > target;
+function styleForEdge(target: string, condition: EdgeData["condition"], feedback?: boolean) {
+  if (feedback) {
+    return {
+      style: { stroke: FEEDBACK_COLOR, strokeWidth: 2.5, strokeDasharray: "7 5" },
+      labelStyle: { fill: FEEDBACK_COLOR, fontWeight: 700, fontSize: 11 },
+      labelBgStyle: { fill: "#f5f3ff", fillOpacity: 0.95 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: FEEDBACK_COLOR },
+      markerStart: { type: MarkerType.ArrowClosed, color: FEEDBACK_COLOR },
+      type: "smoothstep" as const
+    } as const;
+  }
+  const toEnd = target === END_NODE_ID;
+  if (toEnd) {
+    return {
+      style: { stroke: END_COLOR, strokeWidth: 2 },
+      labelStyle: { fill: END_COLOR, fontWeight: 600, fontSize: 11 },
+      labelBgStyle: { fill: "#fff7ed", fillOpacity: 0.95 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: END_COLOR }
+    } as const;
+  }
+  if (condition?.route_equals != null) {
+    return {
+      style: { stroke: ROUTE_COLOR, strokeWidth: 2, strokeDasharray: "6 4" },
+      labelStyle: { fill: ROUTE_COLOR, fontWeight: 600, fontSize: 11 },
+      labelBgStyle: { fill: "#fffbeb", fillOpacity: 0.95 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: ROUTE_COLOR }
+    } as const;
+  }
+  if (condition?.always) {
+    return {
+      style: { stroke: ALWAYS_COLOR, strokeWidth: 2, strokeDasharray: "4 4" },
+      labelStyle: { fill: ALWAYS_COLOR, fontWeight: 600, fontSize: 11 },
+      labelBgStyle: { fill: "#f8fafc", fillOpacity: 0.95 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: ALWAYS_COLOR }
+    } as const;
+  }
   return {
-    id: feedbackEdgeId(source, target),
-    source,
-    target,
-    animated: true,
-    label: "feedback",
-    type: "smoothstep",
-    style: { strokeDasharray: "7 5", stroke: "#8b5cf6", strokeWidth: 2 },
-    labelStyle: { fill: "#6d28d9", fontSize: 11, fontWeight: 600 },
-    labelBgStyle: { fill: "#faf5ff", fillOpacity: 0.92 },
-    pathOptions: { offset: isBackward ? 42 : 28 }
+    style: { strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed }
+  } as const;
+}
+
+function decorateEdge(edge: Edge<EdgeData>): Edge<EdgeData> {
+  const style = styleForEdge(edge.target, edge.data?.condition, edge.data?.feedback);
+  return {
+    ...edge,
+    animated: !edge.data?.condition && edge.target !== END_NODE_ID,
+    label: edge.data?.label || undefined,
+    ...style
   };
+}
+
+function uniqueEdgeId(source: string, target: string, existing: Set<string>) {
+  const base = `${source}->${target}`;
+  if (!existing.has(base)) return base;
+  let counter = 2;
+  while (existing.has(`${base}#${counter}`)) counter += 1;
+  return `${base}#${counter}`;
+}
+
+function validateGraph(nodes: Node<AgentNodeData>[], edges: Edge<EdgeData>[]) {
+  const agentNodes = nodes.filter((node) => node.id !== END_NODE_ID);
+  if (!agentNodes.length) return "Add at least one agent node before saving.";
+
+  // every agent node must be connected to something (single-node graphs are allowed)
+  if (agentNodes.length > 1) {
+    for (const node of agentNodes) {
+      const touched = edges.some((edge) => edge.source === node.id || edge.target === node.id);
+      if (!touched) return `Agent node "${node.data.agent?.name ?? node.id}" is disconnected from the graph.`;
+    }
+  }
+
+  // catch-all duplicates per source
+  const catchAllPerSource = new Map<string, number>();
+  for (const edge of edges) {
+    if (edge.data?.condition?.always) {
+      catchAllPerSource.set(edge.source, (catchAllPerSource.get(edge.source) ?? 0) + 1);
+    }
+  }
+  for (const [source, count] of catchAllPerSource.entries()) {
+    if (count > 1) {
+      const node = nodes.find((item) => item.id === source);
+      return `Agent "${node?.data.agent?.name ?? source}" has more than one catch-all edge. Keep only one.`;
+    }
+  }
+
+  // empty route_equals
+  for (const edge of edges) {
+    if (edge.data?.condition?.route_equals != null && !edge.data.condition.route_equals.trim()) {
+      return "A conditional edge has an empty ROUTE value. Set the value the source agent emits.";
+    }
+  }
+
+  return null;
 }
 
 export default function WorkflowEditor({ params }: { params: { id: string } }) {
@@ -86,10 +167,9 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
-  const [feedbackEdges, setFeedbackEdges] = useState<Edge[]>([]);
-  const [connectionMode, setConnectionMode] = useState<"run" | "feedback">("run");
+  const [edges, setEdges] = useState<Edge<EdgeData>[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [runInput, setRunInput] = useState("");
@@ -104,42 +184,86 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
         setWorkflow(loadedWorkflow);
         setAgents(loadedAgents);
         setModels(loadedModels);
-        const graph = loadedWorkflow.graph as {
-          nodes?: Array<{ id: string; agent_id: string; position?: { x: number; y: number } }>;
-          edges?: Array<{ from: string; to: string }>;
-          ui?: {
-            feedback_edges?: Array<{ from: string; to: string }>;
+
+        const graph = (loadedWorkflow.graph ?? {}) as RawGraph;
+        const rawNodes = graph.nodes ?? [];
+        const rawEdges = graph.edges ?? [];
+
+        const hydratedNodes: Node<AgentNodeData>[] = rawNodes.map((node, index) => ({
+          id: node.id,
+          type: "agent",
+          position: node.position ?? { x: 120 + index * 260, y: 140 },
+          data: { agent: loadedAgents.find((agent) => agent.id === node.agent_id) }
+        }));
+
+        const needsEnd = rawEdges.some((edge) => END_ALIASES.has(String(edge.to).toLowerCase()));
+        if (needsEnd) {
+          const maxX = hydratedNodes.reduce((max, node) => Math.max(max, node.position.x), 0);
+          const avgY = hydratedNodes.length
+            ? hydratedNodes.reduce((sum, node) => sum + node.position.y, 0) / hydratedNodes.length
+            : 200;
+          hydratedNodes.push({
+            id: END_NODE_ID,
+            type: "end",
+            position: { x: maxX + 280, y: avgY },
+            data: {}
+          });
+        }
+
+        const seen = new Set<string>();
+        const hydratedEdges: Edge<EdgeData>[] = rawEdges.map((edge) => {
+          const isEnd = END_ALIASES.has(String(edge.to).toLowerCase());
+          const target = isEnd ? END_NODE_ID : edge.to;
+          const condition = edge.condition ?? undefined;
+          const data: EdgeData = {
+            condition: condition ? { ...condition } : undefined,
+            label: edge.label ?? undefined,
+            feedback: !!edge.ui?.feedback
           };
-        };
-        const hydratedNodes = (graph.nodes ?? []).map((node, index) => ({
-            id: node.id,
-            type: "agent",
-            position: node.position ?? { x: 120 + index * 260, y: 140 },
-            data: { agent: loadedAgents.find((agent) => agent.id === node.agent_id) }
-          }));
-        const hydratedEdges = (graph.edges ?? []).map((edge) => ({ id: `${edge.from}-${edge.to}`, source: edge.from, target: edge.to, animated: true }));
-        const hydratedFeedbackEdges = (graph.ui?.feedback_edges ?? []).map((edge) => feedbackEdge(edge.from, edge.to));
+          const id = uniqueEdgeId(edge.from, target, seen);
+          seen.add(id);
+          return decorateEdge({
+            id,
+            source: edge.from,
+            target,
+            data
+          });
+        });
 
         setNodes(hydratedNodes);
         setEdges(hydratedEdges);
-        setFeedbackEdges(hydratedFeedbackEdges);
       })
       .catch((error) => toast.error(error instanceof Error ? error.message : "Could not load workflow"));
   }, [params.id]);
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+  const selectedEdge = useMemo(() => edges.find((edge) => edge.id === selectedEdgeId) ?? null, [edges, selectedEdgeId]);
+
   const displayNodes = useMemo<Node<AgentNodeData>[]>(() => {
     const incoming = new Set(edges.map((edge) => edge.target));
     const outgoing = new Set(edges.map((edge) => edge.source));
-
     return nodes.map((node) => {
+      if (node.id === END_NODE_ID) return node;
       const isStart = !incoming.has(node.id);
       const isEnd = !outgoing.has(node.id);
       const flowRole = isStart && isEnd ? "start_end" : isStart ? "start" : isEnd ? "end" : undefined;
       return { ...node, data: { ...node.data, flowRole } };
     });
   }, [edges, nodes]);
-  const displayEdges = useMemo<Edge[]>(() => [...feedbackEdges, ...edges], [edges, feedbackEdges]);
+
+  const displayEdges = useMemo<Edge<EdgeData>[]>(
+    () =>
+      edges.map((edge) => {
+        const selected = edge.id === selectedEdgeId;
+        const decorated = decorateEdge(edge);
+        if (!selected) return decorated;
+        return {
+          ...decorated,
+          style: { ...(decorated.style ?? {}), strokeWidth: 3, filter: "drop-shadow(0 0 2px rgba(59,130,246,0.55))" }
+        };
+      }),
+    [edges, selectedEdgeId]
+  );
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     if (!changes.length) return;
@@ -148,48 +272,74 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
   }, []);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
-    const feedbackChanges = changes.filter(isFeedbackEdgeChange);
-    const realEdgeChanges = changes.filter((change) => !isFeedbackEdgeChange(change));
-    if (feedbackChanges.length) setFeedbackEdges((current) => applyEdgeChanges(feedbackChanges, current));
-    if (!realEdgeChanges.length && feedbackChanges.length) {
-      setDirty(true);
-      return;
-    }
-    if (!realEdgeChanges.length) return;
-    setEdges((current) => applyEdgeChanges(realEdgeChanges, current));
+    if (!changes.length) return;
+    setEdges((current) => applyEdgeChanges(changes, current) as Edge<EdgeData>[]);
     setDirty(true);
   }, []);
 
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
-
-    if (connectionMode === "feedback") {
-      const edge = feedbackEdge(connection.source, connection.target);
-      setFeedbackEdges((current) => addEdge(edge, current.filter((item) => item.id !== edge.id)));
-      setDirty(true);
+    if (connection.source === END_NODE_ID) {
+      toast.error("END is terminal — it cannot have outgoing edges.");
       return;
     }
-
-    setEdges((current) => addEdge({ ...connection, id: `${connection.source}-${connection.target}`, animated: true }, current));
+    if (connection.source === connection.target) {
+      toast.error("Self-loops aren't supported.");
+      return;
+    }
+    setEdges((current) => {
+      const existingIds = new Set(current.map((edge) => edge.id));
+      const id = uniqueEdgeId(connection.source!, connection.target!, existingIds);
+      const newEdge = decorateEdge({
+        id,
+        source: connection.source!,
+        target: connection.target!,
+        data: {}
+      });
+      const next = addEdge(newEdge, current) as Edge<EdgeData>[];
+      setSelectedEdgeId(id);
+      return next;
+    });
     setDirty(true);
   }, []);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
-      const agentId = event.dataTransfer.getData("application/agent-id");
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const x = event.clientX - bounds.left;
+      const y = event.clientY - bounds.top;
+
+      const endNode = event.dataTransfer.getData("application/end-node");
+      if (endNode) {
+        if (nodes.some((node) => node.id === END_NODE_ID)) {
+          toast.info("END node already on the canvas.");
+          return;
+        }
+        setNodes((current) => [
+          ...current,
+          {
+            id: END_NODE_ID,
+            type: "end",
+            position: { x: x - 60, y: y - 20 },
+            data: {}
+          }
+        ]);
+        setSelectedNodeId(END_NODE_ID);
+        setDirty(true);
+        return;
+      }
+
       const toolName = event.dataTransfer.getData("application/tool-name");
       if (toolName) {
-        const bounds = event.currentTarget.getBoundingClientRect();
-        const x = event.clientX - bounds.left;
-        const y = event.clientY - bounds.top;
         const droppedNode = nodes.find((node) => {
+          if (node.id === END_NODE_ID) return false;
           const width = 220;
           const height = 120;
           return x >= node.position.x && x <= node.position.x + width && y >= node.position.y && y <= node.position.y + height;
         });
-        const selectedNode = nodes.find((node) => node.id === selectedNodeId);
-        const target = droppedNode ?? selectedNode ?? (nodes.length === 1 ? nodes[0] : null);
+        const focused = nodes.find((node) => node.id === selectedNodeId && node.id !== END_NODE_ID);
+        const target = droppedNode ?? focused ?? (nodes.filter((node) => node.id !== END_NODE_ID).length === 1 ? nodes.find((node) => node.id !== END_NODE_ID) ?? null : null);
         if (!target?.data.agent) {
           toast.error("Select an agent or drop the tool onto one.");
           return;
@@ -207,20 +357,22 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
         setDirty(true);
         return;
       }
+
+      const agentId = event.dataTransfer.getData("application/agent-id");
       const agent = agents.find((item) => item.id === agentId);
       if (!agent) return;
-      const bounds = event.currentTarget.getBoundingClientRect();
       const id = `${agent.id}-${Date.now()}`;
       setNodes((current) => [
         ...current,
         {
           id,
           type: "agent",
-          position: { x: event.clientX - bounds.left - 95, y: event.clientY - bounds.top - 40 },
+          position: { x: x - 95, y: y - 40 },
           data: { agent }
         }
       ]);
       setSelectedNodeId(id);
+      setSelectedEdgeId(null);
       setDirty(true);
     },
     [agents, nodes, selectedNodeId]
@@ -249,6 +401,29 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
     }));
   }
 
+  function applyEdgeData(id: string, data: EdgeData) {
+    setEdges((current) =>
+      current.map((edge) => {
+        if (edge.id !== id) return edge;
+        return decorateEdge({ ...edge, data });
+      })
+    );
+    setDirty(true);
+  }
+
+  function removeEdge(id: string) {
+    setEdges((current) => current.filter((edge) => edge.id !== id));
+    if (selectedEdgeId === id) setSelectedEdgeId(null);
+    setDirty(true);
+  }
+
+  function removeNode(id: string) {
+    setNodes((current) => current.filter((node) => node.id !== id));
+    setEdges((current) => current.filter((edge) => edge.source !== id && edge.target !== id));
+    if (selectedNodeId === id) setSelectedNodeId(null);
+    setDirty(true);
+  }
+
   async function save() {
     const validation = validateGraph(nodes, edges);
     if (validation) {
@@ -256,14 +431,22 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
       return;
     }
     if (!workflow) return;
-    const { markers: _markers, marker_edges: _markerEdges, ...ui } = ((workflow.graph as { ui?: Record<string, unknown> }).ui ?? {}) as Record<string, unknown>;
     const graph = {
-      nodes: nodes.map((node) => ({ id: node.id, agent_id: node.data.agent?.id, position: node.position })),
-      edges: edges.map((edge) => ({ from: edge.source, to: edge.target })),
-      ui: {
-        ...ui,
-        feedback_edges: feedbackEdges.map((edge) => ({ from: edge.source, to: edge.target }))
-      }
+      nodes: nodes
+        .filter((node) => node.id !== END_NODE_ID)
+        .map((node) => ({ id: node.id, agent_id: node.data.agent?.id, position: node.position })),
+      edges: edges.map((edge) => {
+        const out: RawEdge = {
+          from: edge.source,
+          to: edge.target === END_NODE_ID ? "END" : edge.target
+        };
+        const condition = edge.data?.condition;
+        if (condition?.always) out.condition = { always: true };
+        else if (condition?.route_equals != null) out.condition = { route_equals: condition.route_equals };
+        if (edge.data?.label) out.label = edge.data.label;
+        if (edge.data?.feedback) out.ui = { feedback: true };
+        return out;
+      })
     };
     try {
       const updated = await api.updateWorkflow(workflow.id, {
@@ -311,24 +494,6 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
             <Play className="mr-2 h-4 w-4" />
             Run
           </Button>
-          <div className="flex rounded-md border bg-background p-1">
-            <Button
-              className={cn("h-8 px-2", connectionMode === "run" ? "" : "bg-background text-foreground")}
-              onClick={() => setConnectionMode("run")}
-              title="Create executable workflow edges"
-            >
-              <GitBranch className="mr-1 h-4 w-4" />
-              Run path
-            </Button>
-            <Button
-              className={cn("h-8 px-2", connectionMode === "feedback" ? "" : "bg-background text-foreground")}
-              onClick={() => setConnectionMode("feedback")}
-              title="Create visual feedback-loop edges"
-            >
-              <RefreshCcw className="mr-1 h-4 w-4" />
-              Feedback
-            </Button>
-          </div>
           <Button onClick={save}>
             <Save className="mr-2 h-4 w-4" />
             Save
@@ -336,7 +501,7 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr_300px] gap-3">
+      <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr_320px] gap-3">
         <Card className="overflow-auto p-3">
           <AgentPalette agents={agents} onNewAgent={() => setAgentOpen(true)} />
         </Card>
@@ -348,8 +513,18 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onPaneClick={() => setSelectedNodeId(null)}
+            onNodeClick={(_, node) => {
+              setSelectedNodeId(node.id);
+              setSelectedEdgeId(null);
+            }}
+            onEdgeClick={(_, edge) => {
+              setSelectedEdgeId(edge.id);
+              setSelectedNodeId(null);
+            }}
+            onPaneClick={() => {
+              setSelectedNodeId(null);
+              setSelectedEdgeId(null);
+            }}
             onDrop={onDrop}
             onDragOver={(event) => {
               event.preventDefault();
@@ -366,18 +541,16 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
           <NodeInspector
             workflow={workflow}
             selectedNode={selectedNode}
+            selectedEdge={selectedEdge}
+            nodes={nodes}
             edges={edges}
             onWorkflowChange={(patch) => {
               setWorkflow((current) => (current ? { ...current, ...patch } : current));
               setDirty(true);
             }}
-            onRemoveNode={(id) => {
-              setNodes((current) => current.filter((node) => node.id !== id));
-              setEdges((current) => current.filter((edge) => edge.source !== id && edge.target !== id));
-              setFeedbackEdges((current) => current.filter((edge) => edge.source !== id && edge.target !== id));
-              setSelectedNodeId(null);
-              setDirty(true);
-            }}
+            onRemoveNode={removeNode}
+            onEdgeChange={applyEdgeData}
+            onRemoveEdge={removeEdge}
           />
         </Card>
       </div>
