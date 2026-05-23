@@ -1,30 +1,61 @@
 # AI Agent Orchestration Platform
 
-Agent Mesh is a local-first platform for configuring agents, wiring them into LangGraph workflows, and watching runs stream live from the browser or Telegram. The demo focuses on one polished path: customer support triage that can be triggered from the UI or by a real Telegram chat.
+Agent Mesh is a local-first platform for configuring agents, wiring them into LangGraph workflows, and watching runs stream live from the browser or Telegram. Three workflow templates ship out of the box (sequential support triage, research → summarize, and a conditional-edge Smart Router), with rolling per-conversation memory and PII guardrails enforced at the runtime level.
 
 ## Demo
 
-Demo video link: add Loom/OBS link after recording.
+Demo video: _(to be recorded — Loom/OBS link goes here)_.
+
+Three pre-built workflow templates ship with the app:
+
+- **Customer Support Triage** — Triage Agent → Support Specialist, with `order_lookup` + `web_search` tools.
+- **Research & Summarize** — Researcher Agent (forced `web_search`) → Summarizer Agent.
+- **Smart Router** — Triage Agent emits `ROUTE: billing|technical|general` and a conditional edge dispatches to the matching specialist; `condition.always: true` is the catch-all.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-  Telegram[Telegram] --> API[FastAPI API]
-  Browser[Next.js browser UI] --> API
-  Browser --> WS[Run WebSocket]
-  API --> Runtime[In-process runtime<br/>LangGraph StateGraph<br/>Tools: web_search, order_lookup]
-  Runtime --> Events[Event emitter]
-  Events --> WS
-  API --> DB[(PostgreSQL<br/>agents, workflows, runs,<br/>run_events, conversations, messages)]
-  Events --> DB
+flowchart LR
+  subgraph Channels
+    Telegram[Telegram bot<br/>polling or webhook]
+    Browser[Next.js UI<br/>React Flow builder]
+  end
+
+  Telegram --> API
+  Browser -- REST --> API
+  Browser <-- WS stream --> WSRouter
+
+  subgraph Backend [FastAPI backend]
+    API[REST routers<br/>agents · workflows · runs<br/>conversations · stats · telegram]
+    Runner[workflow_runner<br/>execute_run]
+    Graph[graph_builder<br/>LangGraph StateGraph]
+    Guard[guardrails<br/>PII redact]
+    Mem[memory<br/>rolling summary]
+    Tools[tools<br/>web_search · order_lookup<br/>sql_query · calculator · send_email]
+    Emit[event_emitter]
+    WSRouter[WebSocket router<br/>/ws/runs/&#123;id&#125;]
+  end
+
+  API -- create Run, schedule task --> Runner
+  Runner --> Graph
+  Graph -- per-agent node --> Guard
+  Graph --> Tools
+  Graph -- inject summary --> Mem
+  Graph --> Emit
+  Runner -- summarize at end --> Mem
+  Emit --> WSRouter
+  Emit -- persist event --> DB
+  Runner -- persist run/agents/workflow --> DB
+  Mem -- conversation_memories --> DB
+
+  DB[(PostgreSQL<br/>agents · workflows · runs<br/>run_events · conversations<br/>messages · conversation_memories)]
 ```
 
 ### Why these choices
 
-- **LangGraph over CrewAI/AutoGen** because the demo needs explicit state transitions, native async execution, durable event checkpoints, and a simple single-process runtime that is easy to inspect during a live run.
+- **LangGraph over CrewAI/AutoGen** because the demo needs explicit state transitions, native async execution, durable event checkpoints, and a simple single-process runtime that is easy to inspect during a live run. `add_conditional_edges` is also a clean fit for the Smart Router template.
 - **FastAPI + Postgres** because Pydantic keeps the API contract tight, SQLAlchemy async fits the runtime, and Postgres JSON columns are a good match for flexible agent config and workflow graphs.
-- **OpenAI-compatible model adapter** because it lets the same runtime use Anthropic, local Ollama models, OpenRouter free models, or Groq-style hosted open-weight models without rewriting agent execution.
+- **Pluggable model providers** — agents call OpenAI-compatible endpoints (OpenAI, Ollama, OpenRouter, Groq) by default. Anthropic models route through `langchain_anthropic.ChatAnthropic` instead. Either path uses the same agent definition, so the choice of model is per-agent and per-run.
 - **Telegram polling for local demo** because it avoids ngrok and public HTTPS setup. The webhook endpoint is included for production-style deployment, where Telegram can call a public URL.
 - **Single Postgres instead of Postgres + Redis + Qdrant** because this demo does not need RAG, Celery, or cross-replica WebSocket fanout. Fewer moving parts makes the cold-start demo much more reliable.
 
@@ -32,7 +63,9 @@ flowchart TD
 
 ```bash
 cp backend/.env.example backend/.env
-# Fill in OPENAI_COMPATIBLE_API_KEY, TAVILY_API_KEY, and optionally TELEGRAM_BOT_TOKEN
+# Required: OPENAI_COMPATIBLE_API_KEY
+# Optional: TAVILY_API_KEY (web_search falls back to DuckDuckGo if blank)
+# Optional: TELEGRAM_BOT_TOKEN + TELEGRAM_DEFAULT_WORKFLOW_ID for the Telegram path
 docker compose up --build
 ```
 
@@ -56,8 +89,6 @@ REQUIRE_ANTHROPIC_ON_STARTUP=false
 INPUT_COST_PER_1K=0.00005
 OUTPUT_COST_PER_1K=0.0004
 ```
-
-The model id is `gpt-5-nano`; `gpt-5.4-nano` is not the public API model id.
 
 ### Free And Open-Weight Models
 
@@ -109,18 +140,26 @@ For webhook deployments, set `TELEGRAM_MODE=webhook`, set `TELEGRAM_WEBHOOK_URL`
 
 ## Running The Demo
 
-1. Open `http://localhost:3000` and confirm dashboard metrics load.
-2. Open `/agents` and review the Triage Agent and Support Specialist.
-3. Open `/workflows`, edit Customer Support Triage, and confirm the two-node graph loads.
-4. Run Customer Support Triage with:
+1. Open `http://localhost:3000` and confirm the dashboard metrics, 7-day token trend, and per-agent spend table all render.
+2. Open `/agents` and review the seeded agents (Triage, Support Specialist, Researcher, Summarizer, Orchestrator, Smart Router Triage, Billing/Technical/General Specialists).
+3. Open `/workflows`, edit any template, and confirm React Flow renders the graph. `Smart Router` is the conditional-edge demo and `Customer Support Triage` is the Telegram default.
+4. Run **Customer Support Triage** with an order question:
 
-```text
-Hi, I placed order ORD-1042 three days ago and the tracking link isn't working. Can you check the status and tell me what the standard delivery window is for international orders?
-```
+   ```text
+   Hi, I placed order ORD-1042 three days ago and the tracking link isn't working. Can you check the status and tell me what the standard delivery window is for international orders?
+   ```
 
-5. Watch `/runs/{id}` stream `node_started`, `tool_call`, `tool_result`, `agent_message`, and `run_completed`.
-6. Send the same message to the configured Telegram bot.
-7. Open `/conversations`, click the Telegram conversation, and use the `View run` link on the agent reply.
+5. Run **Smart Router** three times to exercise conditional routing:
+
+   ```text
+   I was charged twice on invoice INV-9012, please refund.        # → Billing Specialist
+   My API integration is returning 503 errors on /v1/orders.      # → Technical Specialist
+   How do I change my account display name?                       # → General Support Specialist
+   ```
+
+6. Trigger the PII guardrail by including an email + phone in the user input — a `guardrail_triggered` event appears in the run timeline with `EMAIL`/`PHONE` counts.
+7. Watch `/runs/{id}` stream every event type: `run_started`, `node_started`, `llm_call`, `tool_call`, `tool_result`, `agent_message`, `guardrail_triggered`, `memory_updated` (Telegram only), `node_completed`, `run_completed`.
+8. Send a message to the configured Telegram bot. Open `/conversations`, click the Telegram conversation, and use the `View run` link on the agent reply. Send a second message in the same chat to see the rolling summary picked up.
 
 ## What's Implemented Vs Stubbed
 
@@ -148,15 +187,24 @@ Hi, I placed order ORD-1042 three days ago and the tracking link isn't working. 
 
 ## Project Structure
 
-- `backend/app/main.py` mounts FastAPI routers, startup DB init, seed data, and Telegram polling.
-- `backend/app/api/` contains route modules for agents, workflows, runs, conversations, Telegram, and dashboard stats.
-- `backend/app/integrations/telegram_bot.py` contains shared Telegram polling/webhook handling.
-- `backend/app/runtime/` contains graph construction, tools, event emission, and workflow execution.
-- `backend/app/models/` contains SQLAlchemy models.
-- `backend/app/schemas/` contains Pydantic request/response models.
-- `frontend/app/` contains Next.js App Router pages.
-- `frontend/components/workflow/` contains React Flow workflow builder components.
-- `frontend/lib/api-client.ts` contains the typed fetch wrapper.
+- `backend/app/main.py` — FastAPI bootstrap (router mount, DB init, seed, Telegram lifecycle).
+- `backend/app/api/` — REST routers: `agents`, `workflows`, `runs`, `conversations`, `telegram`, `stats`.
+- `backend/app/integrations/telegram_bot.py` — shared Telegram polling + webhook handling (forwards `conversation_id` into the runner for memory).
+- `backend/app/runtime/` — workflow runtime:
+  - `graph_builder.py` — LangGraph `StateGraph` build, conditional edges, route extraction.
+  - `workflow_runner.py` — Run lifecycle, memory summarization, event totals.
+  - `tools.py` — tool implementations + `TOOL_REGISTRY` (web_search, order_lookup, sql_query, calculator, send_email).
+  - `guardrails.py` — PII redaction.
+  - `memory.py` — rolling-summary read/write.
+  - `event_emitter.py` — persist `RunEvent` + WebSocket broadcast.
+- `backend/app/models/` — SQLAlchemy models (`agents`, `workflows`, `runs`, `run_events`, `conversations`, `messages`, `conversation_memories`).
+- `backend/app/schemas/` — Pydantic request/response models.
+- `backend/alembic/versions/` — schema migrations (`0001` initial → `0003` memory + guardrail event types).
+- `backend/tests/` — `test_contract.py` (REST + WebSocket) and `test_runtime.py` (graph build, tools, guardrails, routing, memory).
+- `frontend/app/` — Next.js App Router pages (dashboard, agents, workflows, runs, conversations, settings).
+- `frontend/components/workflow/` — React Flow nodes, palette, edge styling.
+- `frontend/lib/api-client.ts` — typed fetch wrapper.
+- `docs/EXTENDING.md` — how to add tools, templates, channels, guardrails.
 
 ## Extending The Platform
 
@@ -186,16 +234,17 @@ The runtime parses `ROUTE:` or `CATEGORY:` lines from the last agent message and
 
 ```bash
 cd backend
-pytest
+PYTHONPATH=. pytest
 ```
 
-The runtime integration test that calls Anthropic is marked `integration` and skips unless a real API key is configured.
+The end-to-end `test_run_completes_end_to_end` is marked `integration` and skips unless a real LLM API key is set (`ANTHROPIC_API_KEY` for the Anthropic path, or a working `OPENAI_COMPATIBLE_API_KEY` env for the OpenAI-compatible path). Unit coverage includes graph build, PII redaction, route extraction, conditional routing, and memory injection.
 
 ## Production Roadmap
 
 - Add auth, workspaces, and tenant isolation.
 - Move WebSocket fanout to Redis for multi-replica deployments.
 - Add a vector database only when an agent actually needs RAG.
-- Add observability for run traces, model latency, and per-agent cost.
+- Add agent scheduling (cron / interval triggers via APScheduler).
+- Add tracing (OpenTelemetry) for model latency and per-tool spans.
 - Add secrets management for channel tokens and provider keys.
 - Add durable background workers if runs need to outlive the API process.
