@@ -221,6 +221,52 @@ def test_memory_injection_appends_summary_to_system_prompt() -> None:
     assert inject_memory("BASE", None) == "BASE"
 
 
+def test_telegram_per_chat_workflow_selection_overrides_default(monkeypatch) -> None:
+    from app.integrations import telegram_bot
+
+    async def scenario() -> None:
+        await init_db()
+        async with SessionLocal() as session:
+            agent = Agent(
+                name=f"TG Agent {uuid4()}",
+                role="r",
+                system_prompt="p",
+                model="test",
+                tools=[],
+                config={},
+                channels=["telegram"],
+            )
+            session.add(agent)
+            await session.flush()
+            default_wf = Workflow(
+                name=f"Default WF {uuid4()}",
+                description="default",
+                graph={"nodes": [{"id": "a", "agent_id": str(agent.id)}], "edges": []},
+                is_template=False,
+            )
+            chosen_wf = Workflow(
+                name=f"Chosen WF {uuid4()}",
+                description="chosen",
+                graph={"nodes": [{"id": "a", "agent_id": str(agent.id)}], "edges": []},
+                is_template=False,
+            )
+            session.add_all([default_wf, chosen_wf])
+            await session.commit()
+
+            object.__setattr__(settings, "TELEGRAM_DEFAULT_WORKFLOW_ID", str(default_wf.id))
+
+            wf_unknown, source_unknown = await telegram_bot.get_current_workflow("unknown-chat")
+            assert wf_unknown.id == default_wf.id
+            assert source_unknown == "default"
+
+            await telegram_bot.set_workflow_for_chat("chat-xyz", chosen_wf.id)
+            wf_chat, source_chat = await telegram_bot.get_current_workflow("chat-xyz")
+            assert wf_chat.id == chosen_wf.id
+            assert source_chat == "chat"
+
+    anyio.run(scenario)
+
+
 @pytest.mark.integration
 def test_run_completes_end_to_end() -> None:
     if os.environ.get("ANTHROPIC_API_KEY", "").startswith("test"):

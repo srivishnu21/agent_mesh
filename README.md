@@ -75,6 +75,17 @@ docker compose up --build
 
 On first boot, the backend logs the seeded Customer Support Triage workflow id and writes it to `backend/.telegram_workflow_id`. Copy that value into `backend/.env` as `TELEGRAM_DEFAULT_WORKFLOW_ID`, then restart the backend to enable Telegram routing.
 
+### Telegram Bot Commands
+
+Once polling is running, users can switch workflows per chat:
+
+- `/start` — welcome + workflow picker
+- `/workflows` — inline keyboard listing every seeded workflow; tap one to use it for this chat
+- `/current` — show which workflow this chat is using (and whether the choice is per-chat or the server default)
+- `/help` — command list
+
+The per-chat selection is stored on the `conversations` row (`workflow_id` column). If a chat never picks one, messages fall back to `TELEGRAM_DEFAULT_WORKFLOW_ID`.
+
 ## Model Setup
 
 The default config uses OpenAI's `gpt-5-nano` through the OpenAI-compatible adapter:

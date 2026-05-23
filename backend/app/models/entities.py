@@ -118,6 +118,7 @@ class Conversation(TimestampMixin, Base):
     channel: Mapped[Channel] = mapped_column(Enum(Channel), nullable=False)
     external_id: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
     agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id"), nullable=False)
+    workflow_id: Mapped[UUID | None] = mapped_column(ForeignKey("workflows.id"), nullable=True)
 
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
 
