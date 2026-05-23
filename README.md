@@ -14,56 +14,9 @@ Three pre-built workflow templates ship with the app:
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    User([User])
+![Agent Mesh architecture](docs/architecture.png)
 
-    subgraph Clients
-        Browser["Next.js UI<br/>(React Flow builder)"]
-        Telegram["Telegram bot<br/>(polling / webhook)"]
-    end
-
-    subgraph Backend["FastAPI backend"]
-        API["REST routers<br/>agents · workflows · runs<br/>conversations · stats · telegram"]
-        WS["WebSocket router<br/>/ws/runs/:id"]
-        Runner["workflow_runner<br/>execute_run"]
-
-        subgraph Runtime["Agent runtime"]
-            Graph["graph_builder<br/>LangGraph StateGraph"]
-            Guard["guardrails<br/>PII redact"]
-            Mem["memory<br/>rolling summary"]
-            Tools["tools<br/>web_search · order_lookup<br/>sql_query · calculator · send_email"]
-            Emit["event_emitter"]
-        end
-    end
-
-    DB[("PostgreSQL<br/>agents · workflows · runs<br/>run_events · conversations<br/>messages · conversation_memories")]
-    LLM["LLM providers<br/>(OpenAI · Anthropic · Ollama · OpenRouter)"]
-
-    User -->|chat| Telegram
-    User -->|HTTP| Browser
-    Browser -->|REST| API
-    Browser -->|subscribe| WS
-    Telegram -->|update| API
-
-    API -->|create Run| Runner
-    Runner --> Graph
-    Graph --> Guard
-    Graph --> Mem
-    Graph --> Tools
-    Graph --> Emit
-    Graph -->|invoke| LLM
-    Runner -->|summarize on completion| Mem
-
-    Emit -->|persist| DB
-    Emit -->|broadcast| WS
-    Runner -->|persist run| DB
-    Mem -->|read/write| DB
-    API -->|read/write| DB
-
-    WS -->|stream events| Browser
-    Runner -->|reply text| Telegram
-```
+> Source: [`docs/architecture.dot`](docs/architecture.dot). Rebuild the image with `dot -Tpng -Gdpi=160 docs/architecture.dot -o docs/architecture.png` (requires `graphviz`).
 
 ### Why these choices
 

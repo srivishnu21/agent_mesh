@@ -1,0 +1,118 @@
+digraph AgentMesh {
+  rankdir=TB;
+  bgcolor="#ffffff";
+  fontname="Helvetica";
+  labelloc=t;
+  label=<<B>Agent Mesh Architecture</B>>;
+  fontsize=30;
+  fontcolor="#0f172a";
+  pad=0.8;
+  nodesep=0.55;
+  ranksep=0.9;
+  splines=spline;
+  compound=true;
+
+  node [
+    fontname="Helvetica",
+    fontsize=18,
+    fontcolor="#0f172a",
+    style="filled,rounded",
+    shape=box,
+    fillcolor="#ffffff",
+    color="#475569",
+    penwidth=2,
+    margin="0.25,0.16"
+  ];
+  edge [
+    fontname="Helvetica",
+    fontsize=15,
+    fontcolor="#0f172a",
+    color="#1f2937",
+    penwidth=1.8,
+    arrowsize=1.0
+  ];
+
+  User [label="User", shape=ellipse, fillcolor="#f1f5f9", color="#334155", fontsize=20];
+
+  subgraph cluster_clients {
+    label=<<B>Clients</B>>;
+    fontsize=22;
+    fontcolor="#1e3a8a";
+    style="rounded,filled";
+    fillcolor="#dbeafe";
+    color="#3b82f6";
+    margin=18;
+    Browser [label="Next.js UI\nReact Flow builder", fillcolor="#bfdbfe", color="#1d4ed8"];
+    Telegram [label="Telegram bot\npolling / webhook", fillcolor="#bae6fd", color="#0369a1"];
+  }
+
+  subgraph cluster_backend {
+    label=<<B>FastAPI backend</B>>;
+    fontsize=22;
+    fontcolor="#9a3412";
+    style="rounded,filled";
+    fillcolor="#fff7ed";
+    color="#ea580c";
+    margin=22;
+
+    API [label="REST routers\nagents · workflows · runs\nconversations · stats · telegram", fillcolor="#fed7aa", color="#c2410c"];
+    WS  [label="WebSocket\n/ws/runs/:id", fillcolor="#fed7aa", color="#c2410c"];
+    Runner [label="workflow_runner\nexecute_run", fillcolor="#e9d5ff", color="#7e22ce"];
+    { rank=same; API; WS; }
+
+    subgraph cluster_runtime {
+      label=<<B>Agent runtime</B>>;
+      fontsize=20;
+      fontcolor="#065f46";
+      style="rounded,filled";
+      fillcolor="#ecfdf5";
+      color="#10b981";
+      margin=18;
+
+      Builder [label="graph_builder\nLangGraph StateGraph", fillcolor="#a7f3d0", color="#047857"];
+      Guard [label="guardrails\nPII redact", fillcolor="#fef3c7", color="#b45309"];
+      Mem   [label="memory\nrolling summary", fillcolor="#fef3c7", color="#b45309"];
+      Tools [label="tools\nweb_search · order_lookup\nsql_query · calculator\nsend_email", fillcolor="#fef3c7", color="#b45309"];
+      Emit  [label="event_emitter", fillcolor="#a7f3d0", color="#047857"];
+    }
+  }
+
+  subgraph cluster_external {
+    label=<<B>External</B>>;
+    fontsize=22;
+    fontcolor="#7f1d1d";
+    style="rounded,filled";
+    fillcolor="#fef2f2";
+    color="#dc2626";
+    margin=18;
+    LLM [label="LLM providers\nOpenAI · Anthropic\nOllama · OpenRouter", fillcolor="#fecaca", color="#b91c1c"];
+    DB  [label="PostgreSQL\nagents · workflows · runs\nrun_events · conversations\nmessages · conversation_memories", shape=cylinder, fillcolor="#bae6fd", color="#0369a1"];
+  }
+
+  // User entry
+  User -> Browser  [label="HTTP"];
+  User -> Telegram [label="chat"];
+
+  // Clients ↔ Backend
+  Browser  -> API [label="REST", dir=both];
+  Browser  -> WS  [label="subscribe / events", dir=both];
+  Telegram -> API [label="update / reply", dir=both];
+
+  // Request → Runtime
+  API    -> Runner  [label="create Run"];
+  Runner -> Builder [label="invoke"];
+
+  // Runtime fan-out
+  Builder -> Guard [label="redact"];
+  Builder -> Mem   [label="inject / store", dir=both];
+  Builder -> Tools [label="call / result", dir=both];
+  Builder -> Emit  [label="emit"];
+  Builder -> LLM   [label="chat / completion", dir=both];
+
+  // Persistence + streaming
+  Runner -> DB [label="run / agents", dir=both];
+  Mem    -> DB [label="conversation_memories", dir=both];
+  Emit   -> DB [label="run_events"];
+  Emit   -> WS [label="broadcast", constraint=false];
+  API    -> DB [label="read / write", dir=both];
+}
