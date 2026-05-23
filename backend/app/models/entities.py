@@ -25,6 +25,9 @@ class RunEventType(StrEnum):
     tool_call = "tool_call"
     tool_result = "tool_result"
     llm_call = "llm_call"
+    guardrail_triggered = "guardrail_triggered"
+    edge_routed = "edge_routed"
+    memory_updated = "memory_updated"
     error = "error"
 
 
@@ -132,3 +135,12 @@ class Message(Base):
     )
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+class ConversationMemory(TimestampMixin, Base):
+    __tablename__ = "conversation_memories"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")

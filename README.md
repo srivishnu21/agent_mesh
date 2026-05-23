@@ -129,17 +129,20 @@ Hi, I placed order ORD-1042 three days ago and the tracking link isn't working. 
 | Agent CRUD | Implemented |
 | Workflow CRUD | Implemented |
 | Visual workflow builder | Implemented with React Flow |
+| Conditional edges / routing | Implemented (see `Smart Router` template) |
 | LangGraph runtime | Implemented |
-| Claude agent calls | Implemented |
+| Claude / OpenAI agent calls | Implemented |
 | `order_lookup` tool | Implemented deterministic demo tool |
-| `web_search` tool | Implemented, with fallback when Tavily is missing |
+| `web_search` tool | Implemented (Tavily preferred, DDG fallback chain) |
+| PII guardrails | Implemented (`guardrails.pii: redact` on agent config) |
+| Rolling conversation memory | Implemented per (conversation, agent) |
 | Live run timeline | Implemented over WebSocket |
 | Telegram polling | Implemented |
 | Telegram webhook route | Implemented, production path only |
 | Conversations transcript | Implemented |
-| Dashboard metrics | Implemented |
+| Dashboard metrics + spend trend | Implemented (7-day token trend + per-agent cost) |
 | Auth and multi-tenancy | Stubbed/deferred |
-| Slack/WhatsApp | Stubbed/deferred |
+| Slack/WhatsApp | Stubbed/deferred (see [docs/EXTENDING.md](docs/EXTENDING.md)) |
 | RAG/vector DB | Stubbed/deferred |
 | Scheduling | Stubbed/deferred |
 
@@ -154,6 +157,30 @@ Hi, I placed order ORD-1042 three days ago and the tracking link isn't working. 
 - `frontend/app/` contains Next.js App Router pages.
 - `frontend/components/workflow/` contains React Flow workflow builder components.
 - `frontend/lib/api-client.ts` contains the typed fetch wrapper.
+
+## Extending The Platform
+
+See [docs/EXTENDING.md](docs/EXTENDING.md) for how to add new tools, workflow templates, messaging channels, and guardrails. The Smart Router template demonstrates conditional edges; the Telegram integration is the reference channel adapter.
+
+## Conditional Edges
+
+Workflow edges support a `condition` object so that an upstream agent's decision can pick the next node:
+
+```json
+{
+  "from": "triage",
+  "to": "billing",
+  "condition": {"route_equals": "billing"},
+  "label": "billing"
+}
+```
+
+The runtime parses `ROUTE:` or `CATEGORY:` lines from the last agent message and stores the value in workflow state. Edges with `condition.always: true` act as the catch-all default. See the seeded `Smart Router` template.
+
+## Memory And Guardrails
+
+- Memory: when an agent is configured with `memory_enabled: true` and the run is tied to a `conversation_id` (Telegram conversations always are), the runtime injects a rolling summary into the system prompt and rewrites that summary after the run completes. Storage: `conversation_memories` table.
+- PII guardrails: agents with `config.guardrails.pii = "redact"` get email, phone, credit card, and IPv4 patterns redacted from incoming human messages before the LLM call. A `guardrail_triggered` event is emitted whenever a redaction fires so it is visible in the live run timeline.
 
 ## Tests
 

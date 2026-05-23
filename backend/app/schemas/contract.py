@@ -177,9 +177,27 @@ class DashboardRecentRun(BaseModel):
     total_cost_usd: Decimal
 
 
+class DashboardCostPoint(BaseModel):
+    date: str
+    tokens: int
+    cost_usd: Decimal
+    runs: int
+
+
+class DashboardAgentCost(BaseModel):
+    agent_id: UUID | None
+    agent_name: str
+    runs: int
+    tokens: int
+    cost_usd: Decimal
+
+
 class DashboardStats(BaseModel):
     agents: int
     workflows: int
     runs_today: int
     tokens_today: int
+    cost_today_usd: Decimal = Decimal("0")
     recent_runs: list[DashboardRecentRun] = Field(default_factory=list)
+    cost_trend: list[DashboardCostPoint] = Field(default_factory=list)
+    agent_cost: list[DashboardAgentCost] = Field(default_factory=list)

@@ -95,7 +95,7 @@ async def handle_incoming_message(chat_id: str, user_text: str, telegram_user: d
     except Exception as exc:
         log.warning("Failed to send Telegram typing indicator: %s", exc)
 
-    await execute_run(run_id, workflow_id, user_text)
+    await execute_run(run_id, workflow_id, user_text, conversation_id=conversation_id)
 
     async with async_session_factory() as session:
         run = await session.get(Run, run_id)

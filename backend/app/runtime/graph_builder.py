@@ -1,7 +1,8 @@
+import re
 from uuid import UUID
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.entities import Agent
 from app.runtime.event_emitter import emit
+from app.runtime.guardrails import apply_input_guardrails
+from app.runtime.memory import inject_memory, load_memory_blurbs
 from app.runtime.state import WorkflowState
 from app.runtime.tools import get_tools_for_agent
 
@@ -16,6 +19,22 @@ from app.runtime.tools import get_tools_for_agent
 def _message_content_text(content) -> str:
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+                elif isinstance(text, dict) and isinstance(text.get("value"), str):
+                    parts.append(text["value"])
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(content, dict):
+        text = content.get("text") or content.get("content")
+        if isinstance(text, str):
+            return text
     return str(content)
 
 
@@ -26,27 +45,37 @@ def _model_for_provider(agent: Agent) -> str:
     return model
 
 
-def _make_chat_model(agent: Agent):
+def make_chat_model(agent: Agent, *, temperature: float | None = None, max_tokens: int | None = None):
     config = agent.config or {}
     model = _model_for_provider(agent)
-    temperature = config.get("temperature", 0.2)
-    max_tokens = config.get("max_tokens", 1024)
+    resolved_temperature = config.get("temperature", 0.2) if temperature is None else temperature
+    resolved_max_tokens = config.get("max_tokens", 1024) if max_tokens is None else max_tokens
 
     if settings.LLM_PROVIDER == "openai_compatible":
-        return ChatOpenAI(
-            model=model,
-            api_key=settings.OPENAI_COMPATIBLE_API_KEY,
-            base_url=settings.OPENAI_COMPATIBLE_BASE_URL,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs = {
+            "model": model,
+            "api_key": settings.OPENAI_COMPATIBLE_API_KEY,
+            "base_url": settings.OPENAI_COMPATIBLE_BASE_URL,
+        }
+        if model.startswith("gpt-5"):
+            kwargs["max_completion_tokens"] = max(int(resolved_max_tokens), 2500)
+            kwargs["reasoning_effort"] = config.get("reasoning_effort", "minimal")
+            kwargs["verbosity"] = config.get("verbosity", "medium")
+        else:
+            kwargs["temperature"] = resolved_temperature
+            kwargs["max_completion_tokens"] = resolved_max_tokens
+        return ChatOpenAI(**kwargs)
 
     return ChatAnthropic(
         model=model,
         api_key=settings.ANTHROPIC_API_KEY,
-        temperature=temperature,
-        max_tokens=max_tokens,
+        temperature=resolved_temperature,
+        max_tokens=resolved_max_tokens,
     )
+
+
+def _make_chat_model(agent: Agent):  # legacy alias retained for tests
+    return make_chat_model(agent)
 
 
 def _usage_cost(input_tokens: int, output_tokens: int) -> float:
@@ -55,12 +84,136 @@ def _usage_cost(input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * 3 + output_tokens * 15) / 1_000_000
 
 
-def make_agent_node(agent: Agent, session: AsyncSession):
+_EMPTY_RESULT_MARKERS = ("no results found", "no order found", "search temporarily unavailable")
+
+
+def _classify_tool_result(tool_name: str, result_str: str) -> str:
+    lowered = result_str.strip().lower()
+    if lowered.startswith("tool error:") or lowered.startswith("unknown tool:"):
+        return "error"
+    if any(marker in lowered for marker in _EMPTY_RESULT_MARKERS):
+        return "empty"
+    return "ok"
+
+
+async def _invoke_tool(session: AsyncSession, run_id: UUID, agent: Agent, tool_map: dict, tool_name: str, tool_args: dict) -> str:
+    await emit(
+        session,
+        run_id,
+        "tool_call",
+        {"tool": tool_name, "args": tool_args, "source": "runtime_required"},
+        agent_id=agent.id,
+    )
+    tool_fn = tool_map.get(tool_name)
+    if tool_fn is None:
+        result = f"Unknown tool: {tool_name}"
+    else:
+        try:
+            result = await tool_fn.ainvoke(tool_args)
+        except Exception as exc:
+            result = f"Tool error: {exc}"
+    result_str = str(result)
+    await emit(
+        session,
+        run_id,
+        "tool_result",
+        {
+            "tool": tool_name,
+            "result": result_str[:1500],
+            "source": "runtime_required",
+            "status": _classify_tool_result(tool_name, result_str),
+        },
+        agent_id=agent.id,
+    )
+    return result_str
+
+
+def _latest_user_text(state: WorkflowState) -> str:
+    for message in reversed(state["messages"]):
+        if getattr(message, "type", None) == "human":
+            return _message_content_text(message.content)
+    return _message_content_text(state["messages"][-1].content) if state.get("messages") else ""
+
+
+_SEARCH_STOPWORDS = {
+    "a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "is", "are",
+    "was", "were", "be", "been", "being", "do", "does", "did", "have", "has", "had",
+    "i", "you", "we", "they", "it", "this", "that", "these", "those", "me", "my",
+    "use", "using", "please", "can", "could", "would", "should", "summarize",
+    "summary", "search", "find", "list", "give", "tell", "show", "explain", "about",
+    "what", "which", "who", "whom", "where", "when", "why", "how", "current", "currently",
+}
+
+
+def _build_search_query(text: str, max_words: int = 8, max_chars: int = 120) -> str:
+    cleaned = re.sub(r"[^\w\s\-]", " ", text)
+    words = [w for w in cleaned.split() if w]
+    filtered = [w for w in words if w.lower() not in _SEARCH_STOPWORDS]
+    if not filtered:
+        filtered = words
+    query = " ".join(filtered[:max_words])[:max_chars].strip()
+    return query or text[:max_chars]
+
+
+def _required_tool_plan(agent: Agent, state: WorkflowState, tool_map: dict) -> list[tuple[str, dict]]:
+    text = _latest_user_text(state)
+    configured = agent.config or {}
+    plan = []
+
+    force_tool = configured.get("force_tool")
+    if isinstance(force_tool, str) and force_tool in tool_map:
+        if force_tool == "web_search":
+            plan.append(("web_search", {"query": _build_search_query(text)}))
+        elif force_tool == "sql_query":
+            plan.append(("sql_query", {"query": text}))
+
+    if "order_lookup" in tool_map:
+        for order_id in sorted(set(re.findall(r"\bORD-\d+\b", text, flags=re.IGNORECASE))):
+            plan.append(("order_lookup", {"order_id": order_id.upper()}))
+
+    if "calculator" in tool_map and re.search(r"\d+\s*[+\-*/%]", text):
+        expression = re.sub(r"[^0-9+\-*/%(). ]", "", text).strip()
+        if expression:
+            plan.append(("calculator", {"expression": expression}))
+
+    seen = set()
+    unique_plan = []
+    for tool_name, tool_args in plan:
+        key = (tool_name, tuple(sorted(tool_args.items())))
+        if key not in seen:
+            seen.add(key)
+            unique_plan.append((tool_name, tool_args))
+    return unique_plan
+
+
+def _apply_guardrails_to_messages(messages, agent, session, run_id):
+    guardrails = (agent.config or {}).get("guardrails") or {}
+    if not guardrails:
+        return messages, []
+
+    scrubbed = []
+    triggered_events = []
+    for message in messages:
+        if getattr(message, "type", None) != "human":
+            scrubbed.append(message)
+            continue
+        original = _message_content_text(message.content)
+        outcome = apply_input_guardrails(original, guardrails)
+        if outcome.triggered:
+            triggered_events.append({"types": outcome.triggered, "counts": outcome.counts})
+            scrubbed.append(HumanMessage(content=outcome.text))
+        else:
+            scrubbed.append(message)
+    return scrubbed, triggered_events
+
+
+def make_agent_node(agent: Agent, session: AsyncSession, memory_blurb: str | None = None):
     tools = get_tools_for_agent(agent.tools or [])
-    llm = _make_chat_model(agent)
+    llm = make_chat_model(agent)
     if tools:
         llm = llm.bind_tools(tools)
     tool_map = {tool.name: tool for tool in tools}
+    effective_system_prompt = inject_memory(agent.system_prompt, memory_blurb)
 
     async def node(state: WorkflowState) -> dict:
         run_id = UUID(state["run_id"])
@@ -72,8 +225,34 @@ def make_agent_node(agent: Agent, session: AsyncSession):
             agent_id=agent.id,
         )
 
-        messages = [SystemMessage(content=agent.system_prompt)] + state["messages"]
+        incoming_messages, guardrail_events = _apply_guardrails_to_messages(
+            list(state["messages"]), agent, session, run_id
+        )
+        for event in guardrail_events:
+            await emit(
+                session,
+                run_id,
+                "guardrail_triggered",
+                {"agent_name": agent.name, "guardrail": "pii_redact", **event},
+                agent_id=agent.id,
+            )
+
+        messages = [SystemMessage(content=effective_system_prompt)] + incoming_messages
         new_messages = []
+        required_results = []
+
+        scrubbed_state: WorkflowState = {**state, "messages": incoming_messages}
+        for tool_name, tool_args in _required_tool_plan(agent, scrubbed_state, tool_map):
+            result = await _invoke_tool(session, run_id, agent, tool_map, tool_name, tool_args)
+            required_results.append(f"{tool_name}({tool_args}) -> {result}")
+
+        if required_results:
+            tool_context = (
+                "Runtime-required tool results are verified context for this agent. "
+                "Use them in your answer and cite the relevant facts:\n"
+                + "\n\n".join(required_results)
+            )
+            messages.append(HumanMessage(content=tool_context))
 
         for iteration in range(1, 4):
             await emit(
@@ -108,39 +287,88 @@ def make_agent_node(agent: Agent, session: AsyncSession):
             for tool_call in tool_calls:
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
-                await emit(
-                    session,
-                    run_id,
-                    "tool_call",
-                    {"tool": tool_name, "args": tool_args},
-                    agent_id=agent.id,
-                )
-                tool_fn = tool_map.get(tool_name)
-                if tool_fn is None:
-                    result = f"Unknown tool: {tool_name}"
-                else:
-                    try:
-                        result = await tool_fn.ainvoke(tool_args)
-                    except Exception as exc:
-                        result = f"Tool error: {exc}"
-                await emit(
-                    session,
-                    run_id,
-                    "tool_result",
-                    {"tool": tool_name, "result": str(result)[:1500]},
-                    agent_id=agent.id,
-                )
+                result = await _invoke_tool(session, run_id, agent, tool_map, tool_name, tool_args)
                 tool_message = ToolMessage(content=str(result), tool_call_id=tool_call["id"])
                 messages.append(tool_message)
                 new_messages.append(tool_message)
 
         await emit(session, run_id, "node_completed", {"agent_name": agent.name}, agent_id=agent.id)
-        return {"messages": new_messages}
+
+        update: dict = {"messages": new_messages}
+        last_text = next(
+            (
+                _message_content_text(m.content)
+                for m in reversed(new_messages)
+                if getattr(m, "type", None) in {"ai", "AIMessage"} or m.__class__.__name__ == "AIMessage"
+            ),
+            "",
+        )
+        route = _extract_route(last_text)
+        if route:
+            update["route"] = route
+        return update
 
     return node
 
 
-async def build_graph_from_workflow(workflow, agents_by_id: dict[UUID, Agent], session: AsyncSession):
+_ROUTE_PATTERNS = (
+    re.compile(r"^\s*ROUTE\s*:\s*([A-Za-z0-9_\- ]+)", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^\s*CATEGORY\s*:\s*([A-Za-z0-9_\- ]+)", re.IGNORECASE | re.MULTILINE),
+)
+
+
+def _extract_route(text: str) -> str | None:
+    if not text:
+        return None
+    for pattern in _ROUTE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip().lower().replace(" ", "_")
+    return None
+
+
+def _make_router(edges: list[dict], default_target: str):
+    """Return a callable used by langgraph add_conditional_edges.
+
+    Edges with a ``condition`` dict like ``{"route_equals": "billing"}`` are matched
+    against ``state["route"]``. Edges with ``condition: {"always": True}`` or no condition
+    act as the catch-all fallback in declared order.
+    """
+    typed_edges = []
+    fallback: str | None = None
+    for edge in edges:
+        condition = edge.get("condition") or {}
+        if not condition or condition.get("always"):
+            if fallback is None:
+                fallback = edge["to"]
+            continue
+        match_value = condition.get("route_equals") or condition.get("equals")
+        if match_value is None:
+            continue
+        typed_edges.append((str(match_value).lower(), edge["to"]))
+
+    targets = {target for _, target in typed_edges}
+    if fallback:
+        targets.add(fallback)
+    targets.add(default_target)
+
+    def _router(state: WorkflowState) -> str:
+        route = (state.get("route") or "").lower()
+        for value, target in typed_edges:
+            if route == value:
+                return target
+        return fallback or default_target
+
+    return _router, sorted(targets)
+
+
+async def build_graph_from_workflow(
+    workflow,
+    agents_by_id: dict[UUID, Agent],
+    session: AsyncSession,
+    *,
+    conversation_id: UUID | None = None,
+):
     builder = StateGraph(WorkflowState)
     nodes = workflow.graph.get("nodes", [])
     edges = workflow.graph.get("edges", [])
@@ -148,9 +376,17 @@ async def build_graph_from_workflow(workflow, agents_by_id: dict[UUID, Agent], s
     if not nodes:
         raise ValueError("Workflow has no nodes")
 
+    memory_blurbs: dict[UUID, str] = {}
+    if conversation_id is not None:
+        agent_ids = [UUID(node["agent_id"]) for node in nodes]
+        memory_blurbs = await load_memory_blurbs(session, conversation_id, agent_ids)
+
     for node in nodes:
         agent = agents_by_id[UUID(node["agent_id"])]
-        builder.add_node(node["id"], make_agent_node(agent, session))
+        builder.add_node(
+            node["id"],
+            make_agent_node(agent, session, memory_blurb=memory_blurbs.get(agent.id)),
+        )
 
     incoming = {edge["to"] for edge in edges}
     sources = [node["id"] for node in nodes if node["id"] not in incoming]
@@ -161,8 +397,18 @@ async def build_graph_from_workflow(workflow, agents_by_id: dict[UUID, Agent], s
         raise ValueError(f"Workflow must have exactly one source node, found {len(sources)}")
 
     builder.add_edge(START, sources[0])
+
+    edges_by_source: dict[str, list[dict]] = {}
     for edge in edges:
-        builder.add_edge(edge["from"], edge["to"])
+        edges_by_source.setdefault(edge["from"], []).append(edge)
+
+    for source, source_edges in edges_by_source.items():
+        if any(edge.get("condition") for edge in source_edges):
+            router, targets = _make_router(source_edges, default_target=source_edges[0]["to"])
+            builder.add_conditional_edges(source, router, {t: t for t in targets})
+        else:
+            for edge in source_edges:
+                builder.add_edge(edge["from"], edge["to"])
     for sink in sinks:
         builder.add_edge(sink, END)
 

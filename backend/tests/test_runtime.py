@@ -25,7 +25,7 @@ def test_graph_builder_single_source(monkeypatch) -> None:
     async def noop_node(state):
         return {"messages": []}
 
-    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session: noop_node)
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
     first = Agent(id=uuid4(), name="A", role="A", system_prompt="A", model="test", tools=[], config={}, channels=[])
     second = Agent(id=uuid4(), name="B", role="B", system_prompt="B", model="test", tools=[], config={}, channels=[])
     workflow = SimpleNamespace(
@@ -42,7 +42,7 @@ def test_graph_builder_rejects_multiple_sources(monkeypatch) -> None:
     async def noop_node(state):
         return {"messages": []}
 
-    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session: noop_node)
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
     first = Agent(id=uuid4(), name="A", role="A", system_prompt="A", model="test", tools=[], config={}, channels=[])
     second = Agent(id=uuid4(), name="B", role="B", system_prompt="B", model="test", tools=[], config={}, channels=[])
     workflow = SimpleNamespace(
@@ -94,7 +94,7 @@ def test_telegram_incoming_message_creates_conversation_run_and_reply(monkeypatc
         async def send_chat_action(self, chat_id: str, action: str) -> None:
             sent_messages.append((chat_id, action))
 
-    async def fake_execute_run(run_id, workflow_id, user_input):
+    async def fake_execute_run(run_id, workflow_id, user_input, *, conversation_id=None):
         async with SessionLocal() as session:
             await event_emitter.emit(session, run_id, "agent_message", {"agent_name": "Test", "content": "Hello from agent"})
 
@@ -140,6 +140,85 @@ def test_telegram_incoming_message_creates_conversation_run_and_reply(monkeypatc
             assert sent_messages[-1] == ("chat-42", "Hello from agent")
 
     anyio.run(scenario)
+
+
+def test_pii_guardrail_redacts_email_and_phone() -> None:
+    from app.runtime.guardrails import apply_input_guardrails
+
+    outcome = apply_input_guardrails(
+        "Email me at alice@example.com or call +1 415 555 9012.",
+        {"pii": "redact"},
+    )
+    assert "alice@example.com" not in outcome.text
+    assert "[REDACTED_EMAIL]" in outcome.text
+    assert "[REDACTED_PHONE]" in outcome.text
+    assert set(outcome.triggered) >= {"EMAIL", "PHONE"}
+
+
+def test_pii_guardrail_noop_when_disabled() -> None:
+    from app.runtime.guardrails import apply_input_guardrails
+
+    outcome = apply_input_guardrails("alice@example.com", None)
+    assert outcome.text == "alice@example.com"
+    assert outcome.triggered == []
+
+
+def test_extract_route_parses_route_and_category() -> None:
+    assert graph_builder._extract_route("ROUTE: billing\nSUMMARY: ...") == "billing"
+    assert graph_builder._extract_route("CATEGORY: technical\n") == "technical"
+    assert graph_builder._extract_route("no route here") is None
+
+
+def test_router_picks_conditional_target_then_falls_back() -> None:
+    edges = [
+        {"from": "triage", "to": "billing", "condition": {"route_equals": "billing"}},
+        {"from": "triage", "to": "technical", "condition": {"route_equals": "technical"}},
+        {"from": "triage", "to": "general", "condition": {"always": True}},
+    ]
+    router, targets = graph_builder._make_router(edges, default_target="general")
+    assert router({"route": "billing"}) == "billing"
+    assert router({"route": "technical"}) == "technical"
+    assert router({"route": "weather"}) == "general"
+    assert router({}) == "general"
+    assert {"billing", "technical", "general"} <= set(targets)
+
+
+def test_conditional_workflow_compiles(monkeypatch) -> None:
+    async def noop_node(state):
+        return {"messages": []}
+
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
+    triage = Agent(id=uuid4(), name="Triage", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    billing = Agent(id=uuid4(), name="Billing", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    technical = Agent(id=uuid4(), name="Tech", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    general = Agent(id=uuid4(), name="General", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    workflow = SimpleNamespace(
+        graph={
+            "nodes": [
+                {"id": "t", "agent_id": str(triage.id)},
+                {"id": "b", "agent_id": str(billing.id)},
+                {"id": "tech", "agent_id": str(technical.id)},
+                {"id": "g", "agent_id": str(general.id)},
+            ],
+            "edges": [
+                {"from": "t", "to": "b", "condition": {"route_equals": "billing"}},
+                {"from": "t", "to": "tech", "condition": {"route_equals": "technical"}},
+                {"from": "t", "to": "g", "condition": {"always": True}},
+            ],
+        }
+    )
+    agents = {a.id: a for a in (triage, billing, technical, general)}
+    compiled = anyio.run(graph_builder.build_graph_from_workflow, workflow, agents, None)
+    assert compiled is not None
+
+
+def test_memory_injection_appends_summary_to_system_prompt() -> None:
+    from app.runtime.memory import inject_memory
+
+    prompt = inject_memory("BASE PROMPT", "user prefers concise replies")
+    assert "BASE PROMPT" in prompt
+    assert "user prefers concise replies" in prompt
+    assert inject_memory("BASE", None) == "BASE"
 
 
 @pytest.mark.integration
