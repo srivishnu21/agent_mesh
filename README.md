@@ -24,6 +24,7 @@ flowchart TD
 
 - **LangGraph over CrewAI/AutoGen** because the demo needs explicit state transitions, native async execution, durable event checkpoints, and a simple single-process runtime that is easy to inspect during a live run.
 - **FastAPI + Postgres** because Pydantic keeps the API contract tight, SQLAlchemy async fits the runtime, and Postgres JSON columns are a good match for flexible agent config and workflow graphs.
+- **OpenAI-compatible model adapter** because it lets the same runtime use Anthropic, local Ollama models, OpenRouter free models, or Groq-style hosted open-weight models without rewriting agent execution.
 - **Telegram polling for local demo** because it avoids ngrok and public HTTPS setup. The webhook endpoint is included for production-style deployment, where Telegram can call a public URL.
 - **Single Postgres instead of Postgres + Redis + Qdrant** because this demo does not need RAG, Celery, or cross-replica WebSocket fanout. Fewer moving parts makes the cold-start demo much more reliable.
 
@@ -31,7 +32,7 @@ flowchart TD
 
 ```bash
 cp backend/.env.example backend/.env
-# Fill in ANTHROPIC_API_KEY, TAVILY_API_KEY, and optionally TELEGRAM_BOT_TOKEN
+# Fill in OPENAI_COMPATIBLE_API_KEY, TAVILY_API_KEY, and optionally TELEGRAM_BOT_TOKEN
 docker compose up --build
 ```
 
@@ -40,6 +41,63 @@ docker compose up --build
 - Health: `http://localhost:8000/health`
 
 On first boot, the backend logs the seeded Customer Support Triage workflow id and writes it to `backend/.telegram_workflow_id`. Copy that value into `backend/.env` as `TELEGRAM_DEFAULT_WORKFLOW_ID`, then restart the backend to enable Telegram routing.
+
+## Model Setup
+
+The default config uses OpenAI's `gpt-5-nano` through the OpenAI-compatible adapter:
+
+```env
+LLM_PROVIDER=openai_compatible
+OPENAI_COMPATIBLE_API_KEY=sk-...
+OPENAI_COMPATIBLE_BASE_URL=https://api.openai.com/v1
+OPENAI_COMPATIBLE_MODEL=gpt-5-nano
+DEFAULT_MODEL=gpt-5-nano
+REQUIRE_ANTHROPIC_ON_STARTUP=false
+INPUT_COST_PER_1K=0.00005
+OUTPUT_COST_PER_1K=0.0004
+```
+
+The model id is `gpt-5-nano`; `gpt-5.4-nano` is not the public API model id.
+
+### Free And Open-Weight Models
+
+The runtime also supports any OpenAI-compatible endpoint.
+
+For a truly free local setup, install Ollama and pull an open-weight model:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+Then set:
+
+```env
+LLM_PROVIDER=openai_compatible
+OPENAI_COMPATIBLE_API_KEY=ollama
+OPENAI_COMPATIBLE_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_COMPATIBLE_MODEL=qwen2.5:7b
+DEFAULT_MODEL=qwen2.5:7b
+REQUIRE_ANTHROPIC_ON_STARTUP=false
+INPUT_COST_PER_1K=0
+OUTPUT_COST_PER_1K=0
+```
+
+Good local starter models:
+
+- `qwen2.5:7b` - best first pick for tool-heavy demos on a laptop.
+- `llama3.1:8b` - strong general model if your machine has enough memory.
+- `mistral:7b` - smaller, fast, and usually good enough for a demo.
+
+Hosted free options can work too, but have rate limits and availability changes. For OpenRouter, use an API key and a `:free` model:
+
+```env
+LLM_PROVIDER=openai_compatible
+OPENAI_COMPATIBLE_API_KEY=your_openrouter_key
+OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_COMPATIBLE_MODEL=qwen/qwen3-32b:free
+DEFAULT_MODEL=qwen/qwen3-32b:free
+REQUIRE_ANTHROPIC_ON_STARTUP=false
+```
 
 For local Telegram, keep:
 

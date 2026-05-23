@@ -22,7 +22,7 @@ const emptyForm: AgentCreate = {
   name: "",
   role: "",
   system_prompt: "",
-  model: "claude-sonnet-4-6",
+  model: "gpt-5-nano",
   tools: [],
   config: { temperature: 0.2, memory_enabled: true },
   channels: ["internal"]

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,14 +19,45 @@ def _message_content_text(content) -> str:
     return str(content)
 
 
+def _model_for_provider(agent: Agent) -> str:
+    model = agent.model or settings.DEFAULT_MODEL
+    if settings.LLM_PROVIDER == "openai_compatible" and model.startswith("claude-"):
+        return settings.OPENAI_COMPATIBLE_MODEL
+    return model
+
+
+def _make_chat_model(agent: Agent):
+    config = agent.config or {}
+    model = _model_for_provider(agent)
+    temperature = config.get("temperature", 0.2)
+    max_tokens = config.get("max_tokens", 1024)
+
+    if settings.LLM_PROVIDER == "openai_compatible":
+        return ChatOpenAI(
+            model=model,
+            api_key=settings.OPENAI_COMPATIBLE_API_KEY,
+            base_url=settings.OPENAI_COMPATIBLE_BASE_URL,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    return ChatAnthropic(
+        model=model,
+        api_key=settings.ANTHROPIC_API_KEY,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
+def _usage_cost(input_tokens: int, output_tokens: int) -> float:
+    if settings.LLM_PROVIDER == "openai_compatible":
+        return (input_tokens * settings.INPUT_COST_PER_1K + output_tokens * settings.OUTPUT_COST_PER_1K) / 1000
+    return (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+
 def make_agent_node(agent: Agent, session: AsyncSession):
     tools = get_tools_for_agent(agent.tools or [])
-    llm = ChatAnthropic(
-        model=agent.model or settings.DEFAULT_MODEL,
-        api_key=settings.ANTHROPIC_API_KEY,
-        temperature=(agent.config or {}).get("temperature", 0.2),
-        max_tokens=(agent.config or {}).get("max_tokens", 1024),
-    )
+    llm = _make_chat_model(agent)
     if tools:
         llm = llm.bind_tools(tools)
     tool_map = {tool.name: tool for tool in tools}
@@ -58,7 +90,7 @@ def make_agent_node(agent: Agent, session: AsyncSession):
             usage = getattr(response, "usage_metadata", {}) or {}
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
-            cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+            cost = _usage_cost(input_tokens, output_tokens)
 
             tool_calls = getattr(response, "tool_calls", None) or []
             if not tool_calls:

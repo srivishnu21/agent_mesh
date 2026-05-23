@@ -20,8 +20,13 @@ TOOLS = [
 
 MODELS = [
     Model(id="claude-sonnet-4-5-20250929", provider="anthropic", display_name="Claude Sonnet 4.5", input_cost_per_1k=0.003, output_cost_per_1k=0.015),
-    Model(id="gpt-4o", provider="openai", display_name="GPT-4o", input_cost_per_1k=0.005, output_cost_per_1k=0.015),
-    Model(id="gemini-2.0-flash", provider="google", display_name="Gemini 2.0 Flash", input_cost_per_1k=0.0001, output_cost_per_1k=0.0004),
+    Model(id="gpt-5-nano", provider="openai", display_name="GPT-5 nano", input_cost_per_1k=0.00005, output_cost_per_1k=0.0004),
+    Model(id="gpt-5-mini", provider="openai", display_name="GPT-5 mini", input_cost_per_1k=0.00025, output_cost_per_1k=0.002),
+    Model(id="qwen2.5:7b", provider="ollama", display_name="Qwen 2.5 7B (local)", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="llama3.1:8b", provider="ollama", display_name="Llama 3.1 8B (local)", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="mistral:7b", provider="ollama", display_name="Mistral 7B (local)", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="google/gemma-3-27b-it:free", provider="openrouter", display_name="Gemma 3 27B free (OpenRouter)", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="qwen/qwen3-32b:free", provider="openrouter", display_name="Qwen3 32B free (OpenRouter)", input_cost_per_1k=0, output_cost_per_1k=0),
 ]
 
 

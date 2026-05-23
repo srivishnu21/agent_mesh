@@ -21,7 +21,13 @@ _load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     DATABASE_URL: str = getenv("DATABASE_URL", "sqlite+aiosqlite:///./agent_platform.db")
+    LLM_PROVIDER: str = getenv("LLM_PROVIDER", "anthropic")
     ANTHROPIC_API_KEY: str | None = getenv("ANTHROPIC_API_KEY")
+    OPENAI_COMPATIBLE_API_KEY: str = getenv("OPENAI_COMPATIBLE_API_KEY", "ollama")
+    OPENAI_COMPATIBLE_BASE_URL: str = getenv("OPENAI_COMPATIBLE_BASE_URL", "http://host.docker.internal:11434/v1")
+    OPENAI_COMPATIBLE_MODEL: str = getenv("OPENAI_COMPATIBLE_MODEL", "qwen2.5:7b")
+    INPUT_COST_PER_1K: float = float(getenv("INPUT_COST_PER_1K", "0"))
+    OUTPUT_COST_PER_1K: float = float(getenv("OUTPUT_COST_PER_1K", "0"))
     TAVILY_API_KEY: str | None = getenv("TAVILY_API_KEY")
     DEFAULT_MODEL: str = getenv("DEFAULT_MODEL", "claude-sonnet-4-5-20250929")
     REQUIRE_ANTHROPIC_ON_STARTUP: bool = getenv("REQUIRE_ANTHROPIC_ON_STARTUP", "true").lower() == "true"
@@ -31,8 +37,10 @@ class Settings:
     TELEGRAM_DEFAULT_WORKFLOW_ID: str | None = getenv("TELEGRAM_DEFAULT_WORKFLOW_ID")
 
     def validate_startup(self) -> None:
-        if self.REQUIRE_ANTHROPIC_ON_STARTUP and not self.ANTHROPIC_API_KEY:
+        if self.LLM_PROVIDER == "anthropic" and self.REQUIRE_ANTHROPIC_ON_STARTUP and not self.ANTHROPIC_API_KEY:
             raise RuntimeError("ANTHROPIC_API_KEY is required. Add it to backend/.env before starting the API.")
+        if self.LLM_PROVIDER not in {"anthropic", "openai_compatible"}:
+            raise RuntimeError("LLM_PROVIDER must be 'anthropic' or 'openai_compatible'.")
 
 
 settings = Settings()

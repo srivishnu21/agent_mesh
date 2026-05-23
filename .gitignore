@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 *.db
 *.egg-info/
+backend/.telegram_workflow_id
 
 node_modules/
 .next/

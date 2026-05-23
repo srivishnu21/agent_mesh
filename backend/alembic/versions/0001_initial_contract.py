@@ -15,7 +15,7 @@ branch_labels = None
 depends_on = None
 
 
-run_status = postgresql.ENUM("pending", "running", "completed", "failed", name="runstatus")
+run_status = postgresql.ENUM("pending", "running", "completed", "failed", name="runstatus", create_type=False)
 run_event_type = postgresql.ENUM(
     "run_started",
     "run_completed",
@@ -27,9 +27,10 @@ run_event_type = postgresql.ENUM(
     "llm_call",
     "error",
     name="runeventtype",
+    create_type=False,
 )
-channel = postgresql.ENUM("telegram", "slack", "web", name="channel")
-message_role = postgresql.ENUM("user", "agent", "system", name="messagerole")
+channel = postgresql.ENUM("telegram", "slack", "web", name="channel", create_type=False)
+message_role = postgresql.ENUM("user", "agent", "system", name="messagerole", create_type=False)
 
 
 def upgrade() -> None:
@@ -42,7 +43,7 @@ def upgrade() -> None:
     op.create_table(
         "agents",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("name", sa.String(length=120), nullable=False, unique=True, index=True),
+        sa.Column("name", sa.String(length=120), nullable=False, unique=True),
         sa.Column("role", sa.String(length=240), nullable=False),
         sa.Column("system_prompt", sa.Text(), nullable=False),
         sa.Column("model", sa.String(length=120), nullable=False),
@@ -52,8 +53,6 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
-    op.create_index("ix_agents_name", "agents", ["name"])
-
     op.create_table(
         "workflows",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -94,7 +93,7 @@ def upgrade() -> None:
         "conversations",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("channel", channel, nullable=False),
-        sa.Column("external_id", sa.String(length=240), nullable=False, index=True),
+        sa.Column("external_id", sa.String(length=240), nullable=False),
         sa.Column("agent_id", sa.Uuid(), sa.ForeignKey("agents.id"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -119,7 +118,6 @@ def downgrade() -> None:
     op.drop_table("run_events")
     op.drop_table("runs")
     op.drop_table("workflows")
-    op.drop_index("ix_agents_name", table_name="agents")
     op.drop_table("agents")
     message_role.drop(op.get_bind(), checkfirst=True)
     channel.drop(op.get_bind(), checkfirst=True)
