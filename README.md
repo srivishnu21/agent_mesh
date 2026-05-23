@@ -1,16 +1,17 @@
 # AI Agent Orchestration Platform
 
-Agent Mesh is a local-first platform for configuring agents, wiring them into LangGraph workflows, and watching runs stream live from the browser or Telegram. Three workflow templates ship out of the box (sequential support triage, research → summarize, and a conditional-edge Smart Router), with rolling per-conversation memory and PII guardrails enforced at the runtime level.
+Agent Mesh is a local-first platform for configuring agents, wiring them into LangGraph workflows, and watching runs stream live from the browser or Telegram. Four workflow templates ship out of the box (sequential support triage, research → summarize, conditional Smart Router, and a Draft & Review feedback loop), with rolling per-conversation memory and PII guardrails enforced at the runtime level.
 
 ## Demo
 
 Demo video: _(to be recorded — Loom/OBS link goes here)_.
 
-Three pre-built workflow templates ship with the app:
+Four pre-built workflow templates ship with the app:
 
 - **Customer Support Triage** — Triage Agent → Support Specialist, with `order_lookup` + `web_search` tools.
 - **Research & Summarize** — Researcher Agent (forced `web_search`) → Summarizer Agent.
 - **Smart Router** — Triage Agent emits `ROUTE: billing|technical|general` and a conditional edge dispatches to the matching specialist; `condition.always: true` is the catch-all.
+- **Draft & Review** — Drafter writes, Reviewer evaluates and emits `ROUTE: approve|revise`. The runtime loops back to Drafter on `revise` and exits to `END` on `approve` (Reviewer's own prompt caps the loop at 2 revisions; runtime `recursion_limit=25` bounds it absolutely).
 
 ## Architecture
 
@@ -201,7 +202,25 @@ Workflow edges support a `condition` object so that an upstream agent's decision
 }
 ```
 
-The runtime parses `ROUTE:` or `CATEGORY:` lines from the last agent message and stores the value in workflow state. Edges with `condition.always: true` act as the catch-all default. See the seeded `Smart Router` template.
+The runtime parses `ROUTE:` or `CATEGORY:` lines from the last agent message and stores the value in workflow state. Edges with `condition.always: true` act as the catch-all default. Target `END` (case-insensitive aliases: `__end__`, `exit`, `finish`, `done`) terminates the run. See the seeded `Smart Router` template for a fan-out and `Draft & Review` for a feedback loop.
+
+## Visual Editor — Authoring Feedback Loops
+
+The React Flow workflow editor (`/workflows/<id>/edit`) renders nodes, edges, and a virtual **END** sink. Click any edge to open the inspector and choose its semantics:
+
+- **Straight** — plain animated arrow, runs unconditionally after the source.
+- **Conditional** — dashed amber arrow, fires when the source agent emits `ROUTE: <value>` matching the configured value.
+- **Catch-all** — dashed gray arrow with `condition.always: true`, fires when no other route matches the source.
+- **Feedback loop** (checkbox at the top of the edge panel) — one-click loop-back. Auto-forces conditional routing with `route_equals: "revise"` (override per edge if needed) and renders the edge as a **purple double-arrow** so the cycle is visually obvious.
+
+To wire `Drafter ⇄ Reviewer`:
+
+1. Drop the two agents.
+2. Draw `Drafter → Reviewer` (plain forward edge).
+3. Draw `Reviewer → Drafter`, click the edge, tick **Feedback loop**. The route defaults to `revise`; change it if your reviewer emits something else.
+4. Drag the **END** pill from the palette (under "Flow control") and draw `Reviewer → END` as a Catch-all so the run completes when the reviewer approves.
+
+The "Run path / Feedback" toggle is gone; one connection mode handles everything and the edge inspector decides the meaning. Edges save as `{from, to, condition?, label?, ui?}` — `ui.feedback: true` is what the editor reads to re-render the double-arrow on next load.
 
 ## Memory And Guardrails
 

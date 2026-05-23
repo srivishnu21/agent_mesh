@@ -43,7 +43,7 @@ Templates are seeded rows in the `workflows` table with `is_template=True`. Edit
    }
    ```
 
-3. The Smart Router template is the canonical conditional-edge example — copy its structure.
+3. The Smart Router template is the canonical conditional-edge example; the Draft & Review template shows a feedback loop with `"to": "END"` as the exit edge. Copy whichever shape you need.
 4. Restart the backend (`docker compose restart backend`); seed runs idempotently and `_upsert_*` updates rows in place.
 
 ## Add a new messaging channel

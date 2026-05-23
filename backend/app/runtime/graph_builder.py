@@ -327,39 +327,52 @@ def _extract_route(text: str) -> str | None:
     return None
 
 
+_END_ALIASES = {"end", "__end__", "exit", "finish", "done"}
+
+
+def _resolve_target(name: str):
+    """Map JSON edge target to a langgraph node id or END constant."""
+    if isinstance(name, str) and name.strip().lower() in _END_ALIASES:
+        return END
+    return name
+
+
 def _make_router(edges: list[dict], default_target: str):
     """Return a callable used by langgraph add_conditional_edges.
 
     Edges with a ``condition`` dict like ``{"route_equals": "billing"}`` are matched
     against ``state["route"]``. Edges with ``condition: {"always": True}`` or no condition
-    act as the catch-all fallback in declared order.
+    act as the catch-all fallback in declared order. ``to: "END"`` exits the graph.
     """
     typed_edges = []
-    fallback: str | None = None
+    fallback = None
     for edge in edges:
+        target = _resolve_target(edge["to"])
         condition = edge.get("condition") or {}
         if not condition or condition.get("always"):
             if fallback is None:
-                fallback = edge["to"]
+                fallback = target
             continue
         match_value = condition.get("route_equals") or condition.get("equals")
         if match_value is None:
             continue
-        typed_edges.append((str(match_value).lower(), edge["to"]))
+        typed_edges.append((str(match_value).lower(), target))
 
+    if fallback is None:
+        fallback = _resolve_target(default_target)
     targets = {target for _, target in typed_edges}
-    if fallback:
-        targets.add(fallback)
-    targets.add(default_target)
+    targets.add(fallback)
 
     def _router(state: WorkflowState) -> str:
         route = (state.get("route") or "").lower()
         for value, target in typed_edges:
             if route == value:
                 return target
-        return fallback or default_target
+        return fallback
 
-    return _router, sorted(targets)
+    # path_map keys must match what the router returns. langgraph's END is the literal "__end__".
+    routing_map = {t: t for t in targets}
+    return _router, routing_map
 
 
 async def build_graph_from_workflow(
@@ -388,12 +401,23 @@ async def build_graph_from_workflow(
             make_agent_node(agent, session, memory_blurb=memory_blurbs.get(agent.id)),
         )
 
-    incoming = {edge["to"] for edge in edges}
-    sources = [node["id"] for node in nodes if node["id"] not in incoming]
-    outgoing = {edge["from"] for edge in edges}
-    sinks = [node["id"] for node in nodes if node["id"] not in outgoing]
+    # Sources = nodes with no incoming edge from another real node (ignoring END targets).
+    node_ids = [node["id"] for node in nodes]
+    node_id_set = set(node_ids)
+    incoming = {edge["to"] for edge in edges if edge["to"] in node_id_set}
+    sources = [node_id for node_id in node_ids if node_id not in incoming]
+    # Sinks = nodes whose only outgoing targets are END, or that have no outgoing edge.
+    has_real_outgoing: dict[str, bool] = {node_id: False for node_id in node_ids}
+    for edge in edges:
+        if edge["from"] in node_id_set and edge["to"] in node_id_set:
+            has_real_outgoing[edge["from"]] = True
+    sinks = [node_id for node_id, has_out in has_real_outgoing.items() if not has_out]
 
-    if len(sources) != 1:
+    if not sources:
+        # Every node has incoming = workflow contains a feedback loop. Use the first declared node
+        # as the entry point so the graph still has a START.
+        sources = [node_ids[0]]
+    if len(sources) > 1:
         raise ValueError(f"Workflow must have exactly one source node, found {len(sources)}")
 
     builder.add_edge(START, sources[0])
@@ -404,12 +428,13 @@ async def build_graph_from_workflow(
 
     for source, source_edges in edges_by_source.items():
         if any(edge.get("condition") for edge in source_edges):
-            router, targets = _make_router(source_edges, default_target=source_edges[0]["to"])
-            builder.add_conditional_edges(source, router, {t: t for t in targets})
+            router, routing_map = _make_router(source_edges, default_target=source_edges[0]["to"])
+            builder.add_conditional_edges(source, router, routing_map)
         else:
             for edge in source_edges:
-                builder.add_edge(edge["from"], edge["to"])
+                builder.add_edge(edge["from"], _resolve_target(edge["to"]))
     for sink in sinks:
-        builder.add_edge(sink, END)
+        if sink not in edges_by_source:  # genuinely terminal node, wire to END
+            builder.add_edge(sink, END)
 
     return builder.compile()

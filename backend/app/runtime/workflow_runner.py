@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.db import async_session_factory
 from app.models.entities import Agent, Run, RunEvent, RunEventType, RunStatus, Workflow
+from app.runtime.errors import classify
 from app.runtime.event_emitter import emit
 from app.runtime.graph_builder import build_graph_from_workflow, make_chat_model
 from app.runtime.memory import update_conversation_memory
@@ -109,11 +110,21 @@ async def execute_run(
                         agent_id=last_agent.id,
                     )
         except Exception as exc:
+            classified = classify(exc)
             run.status = RunStatus.failed
-            run.error = str(exc)
+            run.error = f"[{classified.category}] {classified.message}"
             run.completed_at = datetime.now(timezone.utc)
+            # Best-effort: tally tokens accumulated before the failure so the run page still shows usage.
+            try:
+                partial_events = (
+                    await session.execute(select(RunEvent).where(RunEvent.run_id == run_id))
+                ).scalars().all()
+                run.total_tokens = sum(event.tokens for event in partial_events)
+                run.total_cost_usd = sum((event.cost_usd for event in partial_events), Decimal("0"))
+            except Exception:
+                pass
             await session.commit()
-            await emit(session, run_id, "error", {"message": str(exc)})
+            await emit(session, run_id, "error", classified.to_payload())
 
 
 async def _last_speaking_agent(session, run_id: UUID, agents_by_id: dict[UUID, Agent]) -> Agent | None:

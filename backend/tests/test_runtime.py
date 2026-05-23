@@ -12,13 +12,20 @@ os.environ.setdefault("REQUIRE_ANTHROPIC_ON_STARTUP", "false")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 os.environ.setdefault("TELEGRAM_MODE", "polling")
 
-from app.db import SessionLocal, init_db  # noqa: E402
+from app.db import SessionLocal, engine, init_db  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.models.entities import Agent, Channel, Conversation, Message, Run, RunEvent, Workflow  # noqa: E402
 from app.main import app  # noqa: E402
+from app.runtime import errors as runtime_errors  # noqa: E402
 from app.runtime import event_emitter, graph_builder  # noqa: E402
 from app.integrations import telegram_bot  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def dispose_async_engine_between_tests():
+    yield
+    anyio.run(engine.dispose)
 
 
 def test_graph_builder_single_source(monkeypatch) -> None:
@@ -212,6 +219,46 @@ def test_conditional_workflow_compiles(monkeypatch) -> None:
     assert compiled is not None
 
 
+def test_router_resolves_END_alias() -> None:
+    from langgraph.graph import END
+
+    edges = [
+        {"from": "reviewer", "to": "drafter", "condition": {"route_equals": "revise"}},
+        {"from": "reviewer", "to": "END", "condition": {"always": True}},
+    ]
+    router, routing_map = graph_builder._make_router(edges, default_target="drafter")
+    assert router({"route": "revise"}) == "drafter"
+    assert router({"route": "approve"}) is END
+    assert router({}) is END
+    assert routing_map[END] is END
+    assert routing_map["drafter"] == "drafter"
+
+
+def test_feedback_loop_workflow_compiles(monkeypatch) -> None:
+    async def noop_node(state):
+        return {"messages": []}
+
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
+    drafter = Agent(id=uuid4(), name="Drafter", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    reviewer = Agent(id=uuid4(), name="Reviewer", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    workflow = SimpleNamespace(
+        graph={
+            "nodes": [
+                {"id": "drafter", "agent_id": str(drafter.id)},
+                {"id": "reviewer", "agent_id": str(reviewer.id)},
+            ],
+            "edges": [
+                {"from": "drafter", "to": "reviewer"},
+                {"from": "reviewer", "to": "drafter", "condition": {"route_equals": "revise"}},
+                {"from": "reviewer", "to": "END", "condition": {"always": True}},
+            ],
+        }
+    )
+    agents = {a.id: a for a in (drafter, reviewer)}
+    compiled = anyio.run(graph_builder.build_graph_from_workflow, workflow, agents, None)
+    assert compiled is not None
+
+
 def test_memory_injection_appends_summary_to_system_prompt() -> None:
     from app.runtime.memory import inject_memory
 
@@ -267,10 +314,74 @@ def test_telegram_per_chat_workflow_selection_overrides_default(monkeypatch) -> 
     anyio.run(scenario)
 
 
+def test_classify_recursion_limit_via_GraphRecursionError() -> None:
+    if runtime_errors.GraphRecursionError is None:
+        pytest.skip("langgraph not exposing GraphRecursionError in this version")
+    exc = runtime_errors.GraphRecursionError("Recursion limit of 25 reached")
+    result = runtime_errors.classify(exc)
+    assert result.category == "recursion_limit"
+    assert "25" in result.message or "recursion" in result.message.lower()
+
+
+def test_classify_recursion_limit_via_message() -> None:
+    exc = RuntimeError("graph hit recursion limit during execution")
+    result = runtime_errors.classify(exc)
+    assert result.category == "recursion_limit"
+
+
+def test_classify_token_limit() -> None:
+    exc = Exception("This model's maximum context length is 8192 tokens, however you requested 9000.")
+    result = runtime_errors.classify(exc)
+    assert result.category == "token_limit"
+    assert "context" in result.message.lower()
+
+
+def test_classify_rate_limit() -> None:
+    exc = Exception("429 Too Many Requests: rate_limit_exceeded")
+    result = runtime_errors.classify(exc)
+    assert result.category == "rate_limit"
+    assert result.retriable is True
+
+
+def test_classify_auth_error_by_name() -> None:
+    class AuthenticationError(Exception):
+        pass
+
+    exc = AuthenticationError("Invalid credentials")
+    result = runtime_errors.classify(exc)
+    assert result.category == "auth"
+
+
+def test_classify_timeout() -> None:
+    exc = TimeoutError("Request timed out after 60s")
+    result = runtime_errors.classify(exc)
+    assert result.category == "timeout"
+    assert result.retriable is True
+
+
+def test_classify_graph_invalid() -> None:
+    exc = ValueError("Workflow has no nodes")
+    result = runtime_errors.classify(exc)
+    assert result.category == "graph_invalid"
+
+
+def test_classify_unknown_falls_through() -> None:
+    exc = Exception("Some unexpected failure")
+    result = runtime_errors.classify(exc)
+    assert result.category == "unknown"
+    assert "Some unexpected failure" in result.message
+
+
+def test_classified_error_payload_shape() -> None:
+    exc = Exception("rate limit hit")
+    payload = runtime_errors.classify(exc).to_payload()
+    assert set(payload.keys()) == {"category", "message", "hint", "retriable"}
+
+
 @pytest.mark.integration
 def test_run_completes_end_to_end() -> None:
-    if os.environ.get("ANTHROPIC_API_KEY", "").startswith("test"):
-        pytest.skip("Set a real ANTHROPIC_API_KEY to run this integration test")
+    if os.environ.get("RUN_LIVE_LLM_TESTS") != "1":
+        pytest.skip("Set RUN_LIVE_LLM_TESTS=1 to run this integration test")
 
     with TestClient(app) as client:
         workflows = client.get("/api/v1/workflows?is_template=true").json()

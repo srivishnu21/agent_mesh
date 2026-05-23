@@ -175,6 +175,38 @@ ROUTE: <billing | technical | general>
 SUMMARY: <one-sentence restatement>
 KEY_DETAILS: <bullet list of preserved facts>"""
 
+DRAFTER_PROMPT = """SYSTEM ROLE
+You are the Drafter Agent. You produce a first or revised draft of a short reply, post, or note based on the user's request and any feedback notes that previous agent turns left in the conversation.
+
+CIRCLE OF TRUST
+Trust only the user's wording and any explicit REVIEWER_FEEDBACK lines from earlier turns. Do not invent facts the user did not give you.
+
+OPERATING RULES
+- If REVIEWER_FEEDBACK is present in the conversation, treat it as a checklist of things to fix.
+- Keep the draft under 180 words.
+- Do not include meta commentary, headings, or notes. Output the draft directly.
+- Do not emit a ROUTE line; only the Reviewer does that.
+
+OUTPUT CONTRACT
+Return only the draft text. No labels, no quoting."""
+
+REVIEWER_PROMPT = """SYSTEM ROLE
+You are the Reviewer Agent. You evaluate the latest Drafter output against the user's request and decide whether the draft is ready to ship or needs another revision.
+
+CIRCLE OF TRUST
+Trust the user's wording and the Drafter's latest output. Do not invent new requirements.
+
+OPERATING RULES
+- Compare the draft against the user's original request and any clarifying turns.
+- If the draft is good enough, approve it. Otherwise list concrete, minimal fixes.
+- Hard cap: never request more than 2 revision rounds. If you have already requested 2 revisions in this run, approve the current draft.
+- Output must follow the contract exactly so the workflow router can read it.
+
+OUTPUT CONTRACT
+ROUTE: <approve | revise>
+REVIEWER_FEEDBACK: <one-line summary if revise; "looks good" if approve>
+FINAL: <the polished draft to ship if approve; the current draft unchanged if revise>"""
+
 SUMMARIZER_PROMPT = """SYSTEM ROLE
 You are the Summarizer Agent. You transform research notes or prior agent outputs into a crisp final answer.
 
@@ -322,6 +354,26 @@ async def seed_if_empty(db: AsyncSession) -> None:
         config={"temperature": 0.3, "memory_enabled": True, "max_tokens": 900},
         channels=["internal"],
     )
+    drafter = await _upsert_agent(
+        db,
+        "Drafter Agent",
+        role="Produces a first or revised draft based on the user request and reviewer feedback",
+        system_prompt=DRAFTER_PROMPT,
+        model=settings.DEFAULT_MODEL,
+        tools=[],
+        config={"temperature": 0.4, "memory_enabled": False, "max_tokens": 700},
+        channels=["internal"],
+    )
+    reviewer = await _upsert_agent(
+        db,
+        "Reviewer Agent",
+        role="Approves or asks the drafter to revise; emits ROUTE: approve|revise",
+        system_prompt=REVIEWER_PROMPT,
+        model=settings.DEFAULT_MODEL,
+        tools=[],
+        config={"temperature": 0.2, "memory_enabled": False, "max_tokens": 500},
+        channels=["internal"],
+    )
 
     support_workflow = await _upsert_workflow(
         db,
@@ -365,6 +417,23 @@ async def seed_if_empty(db: AsyncSession) -> None:
                 {"from": "triage", "to": "billing", "condition": {"route_equals": "billing"}, "label": "billing"},
                 {"from": "triage", "to": "technical", "condition": {"route_equals": "technical"}, "label": "technical"},
                 {"from": "triage", "to": "general", "condition": {"always": True}, "label": "default"},
+            ],
+        },
+    )
+    await _upsert_workflow(
+        db,
+        "Draft & Review",
+        description="Drafter writes, Reviewer approves or sends back for revision. Reviewer emits ROUTE: approve|revise and the workflow loops on 'revise' until the reviewer approves (capped by the agent's 2-round rule and the runtime recursion limit).",
+        is_template=True,
+        graph={
+            "nodes": [
+                {"id": "drafter", "agent_id": str(drafter.id), "position": {"x": 100, "y": 200}},
+                {"id": "reviewer", "agent_id": str(reviewer.id), "position": {"x": 420, "y": 200}},
+            ],
+            "edges": [
+                {"from": "drafter", "to": "reviewer", "label": "draft"},
+                {"from": "reviewer", "to": "drafter", "condition": {"route_equals": "revise"}, "label": "revise", "ui": {"feedback": True}},
+                {"from": "reviewer", "to": "END", "condition": {"always": True}, "label": "approve"},
             ],
         },
     )

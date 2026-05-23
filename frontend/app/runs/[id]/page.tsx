@@ -5,10 +5,16 @@ import {
   AlertCircle,
   CheckCircle2,
   Circle,
+  Clock,
+  Coins,
+  KeyRound,
+  Loader2,
   MessageCircleMore,
   MessageSquare,
   Package,
   Play,
+  Repeat2,
+  ShieldX,
   Trophy,
   Wrench
 } from "lucide-react";
@@ -33,6 +39,18 @@ const eventMeta = {
   error: { icon: AlertCircle, color: "text-red-600", label: "Error" }
 };
 
+const errorCategoryMeta: Record<string, { label: string; icon: typeof AlertCircle; color: string; bg: string; border: string }> = {
+  recursion_limit: { label: "Recursion limit", icon: Repeat2, color: "text-purple-700", bg: "bg-purple-50", border: "border-purple-200" },
+  token_limit: { label: "Token limit exceeded", icon: Coins, color: "text-orange-700", bg: "bg-orange-50", border: "border-orange-200" },
+  rate_limit: { label: "Rate limited", icon: Clock, color: "text-amber-700", bg: "bg-amber-50", border: "border-amber-200" },
+  auth: { label: "Auth failed", icon: KeyRound, color: "text-rose-700", bg: "bg-rose-50", border: "border-rose-200" },
+  timeout: { label: "Request timed out", icon: Loader2, color: "text-sky-700", bg: "bg-sky-50", border: "border-sky-200" },
+  tool_unavailable: { label: "Tool unavailable", icon: Wrench, color: "text-amber-700", bg: "bg-amber-50", border: "border-amber-200" },
+  graph_invalid: { label: "Workflow graph invalid", icon: ShieldX, color: "text-red-700", bg: "bg-red-50", border: "border-red-200" },
+  model_error: { label: "Model error", icon: AlertCircle, color: "text-red-700", bg: "bg-red-50", border: "border-red-200" },
+  unknown: { label: "Error", icon: AlertCircle, color: "text-red-700", bg: "bg-red-50", border: "border-red-200" }
+};
+
 function costValue(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -52,7 +70,11 @@ function payloadText(event: RunEvent) {
   if (event.event_type === "node_started" || event.event_type === "node_completed") return String(payload.agent_name ?? "");
   if (event.event_type === "run_started") return String(payload.workflow_name ?? "");
   if (event.event_type === "run_completed") return String(payload.final_message ?? "");
-  if (event.event_type === "error") return String(payload.message ?? "");
+  if (event.event_type === "error") {
+    const message = String(payload.message ?? "");
+    const category = payload.category ? String(payload.category) : "";
+    return category ? `[${category}] ${message}` : message;
+  }
   return JSON.stringify(payload);
 }
 
@@ -105,6 +127,10 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
   const runStarted = events.find((event) => event.event_type === "run_started");
   const workflowName = String((runStarted?.payload as Record<string, unknown> | undefined)?.workflow_name ?? run?.workflow_id ?? "Workflow");
   const input = triggerInput(run);
+  const errorEvent = useMemo(() => {
+    const all = events.filter((event) => event.event_type === "error");
+    return all.length ? all[all.length - 1] : null;
+  }, [events]);
   const toolUsage = useMemo(() => {
     const rows: Array<{ call: RunEvent; result?: RunEvent }> = [];
     const pendingByTool = new Map<string, RunEvent[]>();
@@ -162,6 +188,31 @@ export default function RunDetailPage({ params }: { params: { id: string } }) {
           </div>
         </CardHeader>
       </Card>
+
+      {errorEvent && (() => {
+        const payload = (errorEvent.payload ?? {}) as Record<string, unknown>;
+        const category = String(payload.category ?? "unknown");
+        const meta = errorCategoryMeta[category] ?? errorCategoryMeta.unknown;
+        const Icon = meta.icon;
+        const message = String(payload.message ?? "Run failed.");
+        const hint = String(payload.hint ?? "");
+        const retriable = Boolean(payload.retriable);
+        return (
+          <Card className={cn("border-2", meta.border, meta.bg)}>
+            <CardHeader className="flex flex-row items-start gap-3 space-y-0">
+              <Icon className={cn("mt-0.5 h-6 w-6 shrink-0", meta.color)} />
+              <div className="min-w-0 flex-1 space-y-1">
+                <CardTitle className={cn("text-base", meta.color)}>{meta.label}</CardTitle>
+                <p className="text-sm">{message}</p>
+                {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+                {retriable && (
+                  <p className="text-xs font-medium text-emerald-700">This error is often transient — re-running the workflow may succeed.</p>
+                )}
+              </div>
+            </CardHeader>
+          </Card>
+        );
+      })()}
 
       <Card>
         <CardHeader>
