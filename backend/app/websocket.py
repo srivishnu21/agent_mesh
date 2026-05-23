@@ -63,7 +63,10 @@ async def replay_history(run_id: UUID, websocket: WebSocket) -> None:
             select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.created_at)
         )
         for event in result.scalars():
-            await websocket.send_json(serialize_run_event(event))
+            try:
+                await websocket.send_json(serialize_run_event(event))
+            except Exception:
+                return
 
 
 @router.websocket("/ws/runs/{run_id}")

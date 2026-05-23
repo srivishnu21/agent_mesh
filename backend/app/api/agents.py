@@ -13,20 +13,23 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 TOOLS = [
     Tool(name="web_search", description="Search the web for current public information.", params_schema={"query": "string"}),
+    Tool(name="sql_query", description="Run safe read-only SQL over demo business tables.", params_schema={"query": "string"}),
     Tool(name="order_lookup", description="Look up order status by order ID.", params_schema={"order_id": "string"}),
     Tool(name="send_email", description="Send an email through a configured mail provider.", params_schema={"to": "string", "subject": "string", "body": "string"}),
     Tool(name="calculator", description="Evaluate a deterministic arithmetic expression.", params_schema={"expression": "string"}),
 ]
 
 MODELS = [
-    Model(id="claude-sonnet-4-5-20250929", provider="anthropic", display_name="Claude Sonnet 4.5", input_cost_per_1k=0.003, output_cost_per_1k=0.015),
+    Model(id="gpt-5.2", provider="openai", display_name="GPT-5.2", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-5.1", provider="openai", display_name="GPT-5.1", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-5", provider="openai", display_name="GPT-5", input_cost_per_1k=0, output_cost_per_1k=0),
     Model(id="gpt-5-nano", provider="openai", display_name="GPT-5 nano", input_cost_per_1k=0.00005, output_cost_per_1k=0.0004),
     Model(id="gpt-5-mini", provider="openai", display_name="GPT-5 mini", input_cost_per_1k=0.00025, output_cost_per_1k=0.002),
-    Model(id="qwen2.5:7b", provider="ollama", display_name="Qwen 2.5 7B (local)", input_cost_per_1k=0, output_cost_per_1k=0),
-    Model(id="llama3.1:8b", provider="ollama", display_name="Llama 3.1 8B (local)", input_cost_per_1k=0, output_cost_per_1k=0),
-    Model(id="mistral:7b", provider="ollama", display_name="Mistral 7B (local)", input_cost_per_1k=0, output_cost_per_1k=0),
-    Model(id="google/gemma-3-27b-it:free", provider="openrouter", display_name="Gemma 3 27B free (OpenRouter)", input_cost_per_1k=0, output_cost_per_1k=0),
-    Model(id="qwen/qwen3-32b:free", provider="openrouter", display_name="Qwen3 32B free (OpenRouter)", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-4.1", provider="openai", display_name="GPT-4.1", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-4.1-mini", provider="openai", display_name="GPT-4.1 mini", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-4.1-nano", provider="openai", display_name="GPT-4.1 nano", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-4o", provider="openai", display_name="GPT-4o", input_cost_per_1k=0, output_cost_per_1k=0),
+    Model(id="gpt-4o-mini", provider="openai", display_name="GPT-4o mini", input_cost_per_1k=0, output_cost_per_1k=0),
 ]
 
 
