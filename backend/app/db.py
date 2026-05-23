@@ -1,11 +1,11 @@
 from collections.abc import AsyncGenerator
-from os import getenv
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
+from app.config import settings
 
-DATABASE_URL = getenv("DATABASE_URL", "sqlite+aiosqlite:///./agent_platform.db")
+DATABASE_URL = settings.DATABASE_URL
 
 
 class Base(DeclarativeBase):
@@ -14,6 +14,7 @@ class Base(DeclarativeBase):
 
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+async_session_factory = SessionLocal
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

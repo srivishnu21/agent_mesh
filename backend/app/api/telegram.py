@@ -1,49 +1,31 @@
-from typing import Any
+from fastapi import APIRouter, HTTPException, Request
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.db import get_db
-from app.models.entities import Agent, Channel, Conversation, Message, MessageRole
+from app.config import settings
+from app.integrations.telegram_bot import handle_incoming_message
 from app.schemas.contract import TelegramWebhookResponse
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 
 @router.post("/webhook", response_model=TelegramWebhookResponse)
-async def telegram_webhook(update: dict[str, Any], db: AsyncSession = Depends(get_db)) -> TelegramWebhookResponse:
-    message_payload = update.get("message", {})
-    chat = message_payload.get("chat", {})
-    external_id = str(chat.get("id", "unknown"))
-    content = message_payload.get("text", "")
+async def telegram_webhook(request: Request) -> TelegramWebhookResponse:
+    if settings.TELEGRAM_MODE != "webhook":
+        raise HTTPException(status_code=503, detail="Webhook mode not enabled; server is in polling mode")
 
-    agent = (await db.execute(select(Agent).limit(1))).scalar_one_or_none()
-    if not agent:
-        return TelegramWebhookResponse(ok=False)
+    update = await request.json()
+    message = update.get("message") or update.get("edited_message")
+    if not message or not message.get("text"):
+        return TelegramWebhookResponse(ok=True)
 
-    conversation = (
-        await db.execute(
-            select(Conversation).where(
-                Conversation.channel == Channel.telegram,
-                Conversation.external_id == external_id,
-                Conversation.agent_id == agent.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not conversation:
-        conversation = Conversation(channel=Channel.telegram, external_id=external_id, agent_id=agent.id)
-        db.add(conversation)
-        await db.flush()
-
-    message = Message(
-        conversation_id=conversation.id,
-        role=MessageRole.user,
-        content=content,
-        metadata_={"telegram_update_id": update.get("update_id")},
+    chat_id = message["chat"]["id"]
+    user = message.get("from", {})
+    await handle_incoming_message(
+        chat_id=str(chat_id),
+        user_text=message["text"],
+        telegram_user={
+            "id": user.get("id"),
+            "username": user.get("username"),
+            "first_name": user.get("first_name"),
+        },
     )
-    db.add(message)
-    await db.commit()
-    await db.refresh(conversation)
-    await db.refresh(message)
-    return TelegramWebhookResponse(ok=True, conversation_id=conversation.id, message_id=message.id)
+    return TelegramWebhookResponse(ok=True)

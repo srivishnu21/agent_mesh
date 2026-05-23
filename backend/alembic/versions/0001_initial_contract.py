@@ -17,7 +17,16 @@ depends_on = None
 
 run_status = postgresql.ENUM("pending", "running", "completed", "failed", name="runstatus")
 run_event_type = postgresql.ENUM(
-    "node_started", "node_completed", "agent_message", "tool_call", "tool_result", "llm_call", "error", name="runeventtype"
+    "run_started",
+    "run_completed",
+    "node_started",
+    "node_completed",
+    "agent_message",
+    "tool_call",
+    "tool_result",
+    "llm_call",
+    "error",
+    name="runeventtype",
 )
 channel = postgresql.ENUM("telegram", "slack", "web", name="channel")
 message_role = postgresql.ENUM("user", "agent", "system", name="messagerole")

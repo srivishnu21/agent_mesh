@@ -1,6 +1,6 @@
-import type { Agent, AgentCreate, Conversation, Message, Model, Run, RunEvent, Tool, Workflow, WorkflowCreate } from "./types";
+import type { Agent, AgentCreate, Conversation, DashboardStats, Message, Model, Run, RunEvent, Tool, Workflow, WorkflowCreate } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
@@ -41,14 +41,25 @@ export const api = {
   createWorkflow: (payload: WorkflowCreate) => request<Workflow>("/api/v1/workflows", { method: "POST", body: JSON.stringify(payload) }),
   listWorkflows: (params: { is_template?: boolean; limit?: number; offset?: number } = {}) => request<Workflow[]>(`/api/v1/workflows${qs(params)}`),
   getWorkflow: (id: string) => request<Workflow>(`/api/v1/workflows/${id}`),
-  runWorkflow: (id: string, trigger: Record<string, unknown>) => request<{ run_id: string }>(`/api/v1/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ trigger }) }),
+  updateWorkflow: (id: string, payload: Partial<WorkflowCreate>) => request<Workflow>(`/api/v1/workflows/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  runWorkflow: (id: string, input: string) => request<{ run_id: string }>(`/api/v1/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ input }) }),
+  triggerRun: (workflowId: string, input: string) => request<{ run_id: string }>(`/api/v1/workflows/${workflowId}/run`, { method: "POST", body: JSON.stringify({ input }) }),
   listRuns: (params: { workflow_id?: string; status?: string; limit?: number; offset?: number } = {}) => request<Run[]>(`/api/v1/runs${qs(params)}`),
   getRun: (id: string) => request<Run & { events: RunEvent[] }>(`/api/v1/runs/${id}`),
   listRunEvents: (id: string, params: { limit?: number; offset?: number } = {}) => request<RunEvent[]>(`/api/v1/runs/${id}/events${qs(params)}`),
   listConversations: (params: { channel?: string; limit?: number; offset?: number } = {}) => request<Conversation[]>(`/api/v1/conversations${qs(params)}`),
   getConversation: (id: string) => request<Conversation & { messages: Message[] }>(`/api/v1/conversations/${id}`),
   listMessages: (id: string, params: { limit?: number; offset?: number } = {}) => request<Message[]>(`/api/v1/conversations/${id}/messages${qs(params)}`),
+  dashboardStats: () => request<DashboardStats>("/api/v1/stats/dashboard"),
   telegramWebhook: (payload: Record<string, unknown>) => request<{ ok: boolean; conversation_id: string | null; message_id: string | null }>("/api/v1/telegram/webhook", { method: "POST", body: JSON.stringify(payload) })
 };
 
 export const wsRunUrl = (runId: string) => `${API_URL.replace(/^http/, "ws")}/ws/runs/${runId}`;
+
+export async function triggerRun(workflowId: string, input: string) {
+  return api.triggerRun(workflowId, input);
+}
+
+export async function getRunEvents(runId: string) {
+  return api.listRunEvents(runId);
+}

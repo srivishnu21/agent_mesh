@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.models.entities import Run as RunModel
 from app.models.entities import Workflow as WorkflowModel
+from app.runtime.workflow_runner import execute_run
 from app.schemas.contract import RunCreate, RunTriggerResponse, Workflow, WorkflowCreate, WorkflowUpdate
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -69,9 +71,15 @@ async def trigger_workflow(workflow_id: UUID, payload: RunCreate, db: AsyncSessi
     workflow = await db.get(WorkflowModel, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    # TODO: hand this run to LangGraph when the runtime implementation phase begins.
-    run = RunModel(workflow_id=workflow_id, trigger=payload.trigger)
+    user_input = payload.input or str(payload.trigger.get("payload", {}).get("input") or payload.trigger.get("input") or "")
+    if not user_input.strip():
+        raise HTTPException(status_code=422, detail="Run input is required")
+    run = RunModel(
+        workflow_id=workflow_id,
+        trigger={"source": "manual", "payload": {"input": user_input}},
+    )
     db.add(run)
     await db.commit()
     await db.refresh(run)
+    asyncio.create_task(execute_run(run.id, workflow_id, user_input))
     return RunTriggerResponse(run_id=run.id)

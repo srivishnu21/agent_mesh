@@ -485,6 +485,8 @@ export interface components {
         };
         /** RunCreate */
         RunCreate: {
+            /** Input */
+            input?: string | null;
             /** Trigger */
             trigger?: {
                 [key: string]: unknown;
@@ -553,7 +555,7 @@ export interface components {
          * RunEventType
          * @enum {string}
          */
-        RunEventType: "node_started" | "node_completed" | "agent_message" | "tool_call" | "tool_result" | "llm_call" | "error";
+        RunEventType: "run_started" | "run_completed" | "node_started" | "node_completed" | "agent_message" | "tool_call" | "tool_result" | "llm_call" | "error";
         /**
          * RunStatus
          * @enum {string}

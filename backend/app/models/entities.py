@@ -17,6 +17,8 @@ class RunStatus(StrEnum):
 
 
 class RunEventType(StrEnum):
+    run_started = "run_started"
+    run_completed = "run_completed"
     node_started = "node_started"
     node_completed = "node_completed"
     agent_message = "agent_message"

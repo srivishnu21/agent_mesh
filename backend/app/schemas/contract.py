@@ -84,6 +84,7 @@ class Workflow(WorkflowBase):
 
 
 class RunCreate(BaseModel):
+    input: str | None = None
     trigger: JsonDict = Field(default_factory=dict)
 
 
@@ -133,6 +134,13 @@ class Conversation(BaseModel):
     updated_at: datetime
 
 
+class ConversationSummary(Conversation):
+    last_message_preview: str | None = None
+    last_message_at: datetime | None = None
+    message_count: int = 0
+    telegram_user: JsonDict | None = None
+
+
 class Message(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -157,3 +165,21 @@ class TelegramWebhookResponse(BaseModel):
     ok: bool
     conversation_id: UUID | None = None
     message_id: UUID | None = None
+
+
+class DashboardRecentRun(BaseModel):
+    id: UUID
+    workflow_id: UUID
+    workflow_name: str
+    status: RunStatus
+    started_at: datetime | None
+    total_tokens: int
+    total_cost_usd: Decimal
+
+
+class DashboardStats(BaseModel):
+    agents: int
+    workflows: int
+    runs_today: int
+    tokens_today: int
+    recent_runs: list[DashboardRecentRun] = Field(default_factory=list)

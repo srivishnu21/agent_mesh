@@ -1,11 +1,14 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Activity } from "lucide-react";
 import Link from "next/link";
 
 import { api } from "@/lib/api-client";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 
 export default function RunsPage() {
@@ -25,23 +28,43 @@ export default function RunsPage() {
               </TR>
             </THead>
             <TBody>
+              {runs.isLoading &&
+                Array.from({ length: 5 }).map((_, index) => (
+                  <TR key={index}>
+                    <TD colSpan={4}>
+                      <Skeleton className="h-6 w-full" />
+                    </TD>
+                  </TR>
+                ))}
               {runs.data?.map((run) => (
-                <TR key={run.id}>
+                <TR key={run.id} className="hover:bg-muted/60">
                   <TD>
-                    <Link className="font-medium text-primary" href={`/runs/${run.id}`}>
+                    <Link className="block font-medium text-primary" href={`/runs/${run.id}`}>
                       {run.id}
                     </Link>
                   </TD>
                   <TD>
-                    <Badge>{run.status}</Badge>
+                    <Link href={`/runs/${run.id}`}>
+                      <StatusBadge status={run.status} />
+                    </Link>
                   </TD>
-                  <TD>{run.total_tokens}</TD>
-                  <TD>${run.total_cost_usd}</TD>
+                  <TD>
+                    <Link className="block" href={`/runs/${run.id}`}>
+                      {run.total_tokens}
+                    </Link>
+                  </TD>
+                  <TD>
+                    <Link className="block" href={`/runs/${run.id}`}>
+                      ${Number(run.total_cost_usd).toFixed(4)}
+                    </Link>
+                  </TD>
                 </TR>
               ))}
-              {!runs.data?.length && (
+              {!runs.isLoading && !runs.data?.length && (
                 <TR>
-                  <TD colSpan={4} className="py-8 text-center text-muted-foreground">No runs yet.</TD>
+                  <TD colSpan={4}>
+                    <EmptyState icon={Activity} message="No runs yet. Start a workflow to see live events." />
+                  </TD>
                 </TR>
               )}
             </TBody>

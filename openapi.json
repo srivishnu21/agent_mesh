@@ -1557,6 +1557,17 @@
       },
       "RunCreate": {
         "properties": {
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
           "trigger": {
             "additionalProperties": true,
             "type": "object",
@@ -1715,6 +1726,8 @@
       "RunEventType": {
         "type": "string",
         "enum": [
+          "run_started",
+          "run_completed",
           "node_started",
           "node_completed",
           "agent_message",

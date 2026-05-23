@@ -3,6 +3,10 @@ from pathlib import Path
 from uuid import uuid4
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_contract.db"
+os.environ["ANTHROPIC_API_KEY"] = "test-key"
+os.environ["REQUIRE_ANTHROPIC_ON_STARTUP"] = "false"
+os.environ["TELEGRAM_BOT_TOKEN"] = ""
+os.environ["TELEGRAM_MODE"] = "polling"
 Path("test_contract.db").unlink(missing_ok=True)
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -42,7 +46,7 @@ def test_agent_round_trip_and_static_registries() -> None:
         assert client.delete(f"/api/v1/agents/{agent_id}").status_code == 204
 
 
-def test_workflow_round_trip_and_run_stub() -> None:
+def test_workflow_round_trip_and_run_creation() -> None:
     with TestClient(app) as client:
         payload = {
             "name": f"Contract Workflow {uuid4()}",
@@ -57,30 +61,36 @@ def test_workflow_round_trip_and_run_stub() -> None:
         assert fetched.status_code == 200
         assert fetched.json()["name"] == payload["name"]
 
-        run = client.post(f"/api/v1/workflows/{workflow_id}/run", json={"trigger": {"source": "manual", "payload": {}}})
+        run = client.post(f"/api/v1/workflows/{workflow_id}/run", json={"input": "Contract smoke input"})
         assert run.status_code == 201
         run_id = run.json()["run_id"]
         assert client.get(f"/api/v1/runs/{run_id}").status_code == 200
         assert client.get(f"/api/v1/runs/{run_id}/events").status_code == 200
 
 
-def test_conversation_and_telegram_stub_contract() -> None:
+def test_conversation_and_telegram_polling_contract() -> None:
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/telegram/webhook",
             json={"update_id": 123, "message": {"text": "hello", "chat": {"id": "chat-1"}}},
         )
-        assert response.status_code == 200
-        conversation_id = response.json()["conversation_id"]
+        assert response.status_code == 503
         assert client.get("/api/v1/conversations?channel=telegram").status_code == 200
-        assert client.get(f"/api/v1/conversations/{conversation_id}").status_code == 200
-        assert client.get(f"/api/v1/conversations/{conversation_id}/messages").status_code == 200
+        assert client.get("/api/v1/stats/dashboard").status_code == 200
 
 
-def test_run_websocket_stub_broadcasts() -> None:
+def test_run_websocket_replays_runtime_events() -> None:
     with TestClient(app) as client:
-        workflow = client.get("/api/v1/workflows?is_template=true").json()[0]
-        run_id = client.post(f"/api/v1/workflows/{workflow['id']}/run", json={"trigger": {"source": "manual"}}).json()["run_id"]
+        workflow = client.post(
+            "/api/v1/workflows",
+            json={
+                "name": f"Replay Workflow {uuid4()}",
+                "description": "Empty graph emits run_started then error without LLM calls.",
+                "graph": {"nodes": [], "edges": []},
+                "is_template": False,
+            },
+        ).json()
+        run_id = client.post(f"/api/v1/workflows/{workflow['id']}/run", json={"input": "Replay smoke"}).json()["run_id"]
         with client.websocket_connect(f"/ws/runs/{run_id}") as websocket:
             event = websocket.receive_json()
-            assert event["event_type"] == "agent_message"
+            assert event["event_type"] in {"run_started", "error"}

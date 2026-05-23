@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Bot, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api-client";
@@ -11,8 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -84,6 +86,14 @@ export default function AgentsPage() {
               </TR>
             </THead>
             <TBody>
+              {agents.isLoading &&
+                Array.from({ length: 4 }).map((_, index) => (
+                  <TR key={index}>
+                    <TD colSpan={5}>
+                      <Skeleton className="h-6 w-full" />
+                    </TD>
+                  </TR>
+                ))}
               {agents.data?.map((agent) => (
                 <TR key={agent.id}>
                   <TD className="font-medium">{agent.name}</TD>
@@ -101,10 +111,10 @@ export default function AgentsPage() {
                   </TD>
                 </TR>
               ))}
-              {!agents.data?.length && (
+              {!agents.isLoading && !agents.data?.length && (
                 <TR>
-                  <TD colSpan={5} className="py-8 text-center text-muted-foreground">
-                    {agents.isLoading ? "Loading agents..." : "No agents yet."}
+                  <TD colSpan={5}>
+                    <EmptyState icon={Bot} message="No agents yet. Create one to start building workflows." action="New agent" onAction={() => setOpen(true)} />
                   </TD>
                 </TR>
               )}

@@ -19,7 +19,7 @@ TOOLS = [
 ]
 
 MODELS = [
-    Model(id="claude-sonnet-4-6", provider="anthropic", display_name="Claude Sonnet 4.6", input_cost_per_1k=0.003, output_cost_per_1k=0.015),
+    Model(id="claude-sonnet-4-5-20250929", provider="anthropic", display_name="Claude Sonnet 4.5", input_cost_per_1k=0.003, output_cost_per_1k=0.015),
     Model(id="gpt-4o", provider="openai", display_name="GPT-4o", input_cost_per_1k=0.005, output_cost_per_1k=0.015),
     Model(id="gemini-2.0-flash", provider="google", display_name="Gemini 2.0 Flash", input_cost_per_1k=0.0001, output_cost_per_1k=0.0004),
 ]
