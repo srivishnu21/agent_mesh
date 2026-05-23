@@ -9,6 +9,7 @@ backend/.telegram_workflow_id
 
 node_modules/
 .next/
+*.tsbuildinfo
 out/
 dist/
 .env

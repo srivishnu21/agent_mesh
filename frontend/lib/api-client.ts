@@ -42,6 +42,8 @@ export const api = {
   listWorkflows: (params: { is_template?: boolean; limit?: number; offset?: number } = {}) => request<Workflow[]>(`/api/v1/workflows${qs(params)}`),
   getWorkflow: (id: string) => request<Workflow>(`/api/v1/workflows/${id}`),
   updateWorkflow: (id: string, payload: Partial<WorkflowCreate>) => request<Workflow>(`/api/v1/workflows/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteWorkflow: (id: string, params: { force?: boolean } = {}) =>
+    request<void>(`/api/v1/workflows/${id}${qs(params)}`, { method: "DELETE" }),
   runWorkflow: (id: string, input: string) => request<{ run_id: string }>(`/api/v1/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ input }) }),
   triggerRun: (workflowId: string, input: string) => request<{ run_id: string }>(`/api/v1/workflows/${workflowId}/run`, { method: "POST", body: JSON.stringify({ input }) }),
   listRuns: (params: { workflow_id?: string; status?: string; limit?: number; offset?: number } = {}) => request<Run[]>(`/api/v1/runs${qs(params)}`),

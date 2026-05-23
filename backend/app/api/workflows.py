@@ -2,10 +2,11 @@ import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.models.entities import Conversation as ConversationModel
 from app.models.entities import Run as RunModel
 from app.models.entities import Workflow as WorkflowModel
 from app.runtime.workflow_runner import execute_run
@@ -58,10 +59,38 @@ async def update_workflow(workflow_id: UUID, payload: WorkflowUpdate, db: AsyncS
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_workflow(
+    workflow_id: UUID,
+    force: bool = Query(False, description="Cascade-delete linked runs and detach conversations."),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     workflow = await db.get(WorkflowModel, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+
+    run_count = (
+        await db.execute(select(func.count(RunModel.id)).where(RunModel.workflow_id == workflow_id))
+    ).scalar_one()
+
+    if run_count and not force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow has {run_count} run(s). Re-issue DELETE with ?force=true to cascade-delete runs and events.",
+        )
+
+    if run_count:
+        # Cascade: delete runs (run_events auto-cascade via relationship), detach conversations.
+        runs = (
+            await db.execute(select(RunModel).where(RunModel.workflow_id == workflow_id))
+        ).scalars().all()
+        for run in runs:
+            await db.delete(run)
+        await db.execute(
+            ConversationModel.__table__.update()
+            .where(ConversationModel.workflow_id == workflow_id)
+            .values(workflow_id=None)
+        )
+
     await db.delete(workflow)
     await db.commit()
 

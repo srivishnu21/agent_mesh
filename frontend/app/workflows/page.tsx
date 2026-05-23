@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitBranchPlus, Play, Plus, Settings2 } from "lucide-react";
+import { GitBranchPlus, Play, Plus, Settings2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -20,7 +20,11 @@ import { Textarea } from "@/components/ui/textarea";
 const samples: Record<string, string> = {
   "Customer Support Triage":
     "Hi, I placed order ORD-1042 three days ago and the tracking link isn't working. Can you check the status and tell me what the standard delivery window is for international orders?",
-  "Research & Summarize": "What are the main approaches to retrieval-augmented generation in 2025?"
+  "Research & Summarize": "What are the main approaches to retrieval-augmented generation in 2025?",
+  "Smart Router":
+    "My invoice from last month is double the usual amount. Can you check what's going on and fix the charge?",
+  "Draft & Review":
+    "Write a short tweet (under 240 chars) announcing that our open-source agent framework now supports feedback loops between agents."
 };
 
 function sampleFor(workflow: Workflow | null) {
@@ -33,6 +37,8 @@ export default function WorkflowsPage() {
   const [selected, setSelected] = useState<Workflow | null>(null);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Workflow | null>(null);
   const workflows = useQuery({ queryKey: ["workflows"], queryFn: () => api.listWorkflows() });
 
   const sorted = useMemo(
@@ -56,6 +62,29 @@ export default function WorkflowsPage() {
       toast.error(error instanceof Error ? error.message : "Could not start run");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function deleteWorkflow(workflow: Workflow, force = false) {
+    setDeletingId(workflow.id);
+    try {
+      await api.deleteWorkflow(workflow.id, force ? { force: true } : {});
+      await workflows.refetch();
+      toast.success(`Deleted "${workflow.name}"`);
+      setConfirmDelete(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not delete workflow";
+      if (!force && message.includes("409")) {
+        const ok = window.confirm(`${workflow.name} has existing runs. Cascade-delete runs + events too?`);
+        if (ok) {
+          await deleteWorkflow(workflow, true);
+          return;
+        }
+      } else {
+        toast.error(message);
+      }
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -86,31 +115,43 @@ export default function WorkflowsPage() {
         </Button>
       </div>
       <Card>
-        <CardContent className="p-0">
-          <Table>
+        <CardContent className="overflow-x-auto p-0">
+          <Table className="min-w-[860px]">
             <THead>
               <TR>
                 <TH>Name</TH>
                 <TH>Description</TH>
                 <TH>Type</TH>
-                <TH className="w-40 text-right">Action</TH>
+                <TH className="w-[260px] text-right">Actions</TH>
               </TR>
             </THead>
             <TBody>
               {sorted.map((workflow) => (
                 <TR key={workflow.id}>
-                  <TD className="font-medium">{workflow.name}</TD>
-                  <TD>{workflow.description}</TD>
-                  <TD>{workflow.is_template ? <Badge>Template</Badge> : <Badge>Custom</Badge>}</TD>
-                  <TD className="space-x-2 text-right">
-                    <Button className="h-8 px-2 border bg-background text-foreground" onClick={() => router.push(`/workflows/${workflow.id}/edit`)}>
-                      <Settings2 className="mr-1 h-4 w-4" />
-                      Edit
-                    </Button>
-                    <Button className="h-8 px-2" onClick={() => openRunDialog(workflow)}>
-                      <Play className="mr-1 h-4 w-4" />
-                      Run
-                    </Button>
+                  <TD className="w-[220px] align-middle font-medium">{workflow.name}</TD>
+                  <TD className="max-w-[520px] align-middle text-sm text-muted-foreground">
+                    <span className="line-clamp-2">{workflow.description}</span>
+                  </TD>
+                  <TD className="w-[110px] align-middle">{workflow.is_template ? <Badge>Template</Badge> : <Badge>Custom</Badge>}</TD>
+                  <TD className="align-middle">
+                    <div className="flex justify-end gap-2 whitespace-nowrap">
+                      <Button className="h-8 shrink-0 px-2 border bg-background text-foreground" onClick={() => router.push(`/workflows/${workflow.id}/edit`)}>
+                        <Settings2 className="mr-1 h-4 w-4" />
+                        Edit
+                      </Button>
+                      <Button className="h-8 shrink-0 px-2" onClick={() => openRunDialog(workflow)}>
+                        <Play className="mr-1 h-4 w-4" />
+                        Run
+                      </Button>
+                      <Button
+                        className="h-8 shrink-0 px-2 border border-red-200 bg-background text-red-700 hover:bg-red-50"
+                        onClick={() => setConfirmDelete(workflow)}
+                        disabled={deletingId === workflow.id}
+                        title={`Delete ${workflow.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TD>
                 </TR>
               ))}
@@ -147,6 +188,38 @@ export default function WorkflowsPage() {
             <Button disabled={running || !input.trim()}>{running ? "Starting..." : "Start Run"}</Button>
           </div>
         </form>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(confirmDelete)}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+        title={`Delete workflow?`}
+      >
+        <div className="space-y-4 text-sm">
+          <p>
+            Permanently delete <span className="font-semibold">{confirmDelete?.name}</span>?
+            {confirmDelete?.is_template && (
+              <span className="mt-2 block text-xs text-amber-700">
+                This is a seeded template. It will reappear on the next backend restart.
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            If this workflow has previous runs, you&apos;ll be asked whether to cascade-delete those runs and their events. Linked conversations are detached (their channel history is preserved).
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" className="border bg-background text-foreground" onClick={() => setConfirmDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={() => confirmDelete && deleteWorkflow(confirmDelete)}
+              disabled={deletingId === confirmDelete?.id}
+            >
+              {deletingId === confirmDelete?.id ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </div>
       </Dialog>
     </div>
   );

@@ -7,7 +7,10 @@ import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "Agent Mesh",
-  description: "AI agent orchestration contract scaffold"
+  description: "AI agent orchestration contract scaffold",
+  icons: {
+    icon: "/favicon.svg"
+  }
 };
 
 const nav = [
