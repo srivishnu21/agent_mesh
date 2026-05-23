@@ -16,39 +16,53 @@ Three pre-built workflow templates ship with the app:
 
 ```mermaid
 flowchart LR
-  subgraph Channels
-    Telegram[Telegram bot<br/>polling or webhook]
-    Browser[Next.js UI<br/>React Flow builder]
-  end
+    User([User])
 
-  Telegram --> API
-  Browser -- REST --> API
-  Browser <-- WS stream --> WSRouter
+    subgraph Clients
+        Browser["Next.js UI<br/>(React Flow builder)"]
+        Telegram["Telegram bot<br/>(polling / webhook)"]
+    end
 
-  subgraph Backend [FastAPI backend]
-    API[REST routers<br/>agents · workflows · runs<br/>conversations · stats · telegram]
-    Runner[workflow_runner<br/>execute_run]
-    Graph[graph_builder<br/>LangGraph StateGraph]
-    Guard[guardrails<br/>PII redact]
-    Mem[memory<br/>rolling summary]
-    Tools[tools<br/>web_search · order_lookup<br/>sql_query · calculator · send_email]
-    Emit[event_emitter]
-    WSRouter[WebSocket router<br/>/ws/runs/&#123;id&#125;]
-  end
+    subgraph Backend["FastAPI backend"]
+        API["REST routers<br/>agents · workflows · runs<br/>conversations · stats · telegram"]
+        WS["WebSocket router<br/>/ws/runs/:id"]
+        Runner["workflow_runner<br/>execute_run"]
 
-  API -- create Run, schedule task --> Runner
-  Runner --> Graph
-  Graph -- per-agent node --> Guard
-  Graph --> Tools
-  Graph -- inject summary --> Mem
-  Graph --> Emit
-  Runner -- summarize at end --> Mem
-  Emit --> WSRouter
-  Emit -- persist event --> DB
-  Runner -- persist run/agents/workflow --> DB
-  Mem -- conversation_memories --> DB
+        subgraph Runtime["Agent runtime"]
+            Graph["graph_builder<br/>LangGraph StateGraph"]
+            Guard["guardrails<br/>PII redact"]
+            Mem["memory<br/>rolling summary"]
+            Tools["tools<br/>web_search · order_lookup<br/>sql_query · calculator · send_email"]
+            Emit["event_emitter"]
+        end
+    end
 
-  DB[(PostgreSQL<br/>agents · workflows · runs<br/>run_events · conversations<br/>messages · conversation_memories)]
+    DB[("PostgreSQL<br/>agents · workflows · runs<br/>run_events · conversations<br/>messages · conversation_memories")]
+    LLM["LLM providers<br/>(OpenAI · Anthropic · Ollama · OpenRouter)"]
+
+    User -->|chat| Telegram
+    User -->|HTTP| Browser
+    Browser -->|REST| API
+    Browser -->|subscribe| WS
+    Telegram -->|update| API
+
+    API -->|create Run| Runner
+    Runner --> Graph
+    Graph --> Guard
+    Graph --> Mem
+    Graph --> Tools
+    Graph --> Emit
+    Graph -->|invoke| LLM
+    Runner -->|summarize on completion| Mem
+
+    Emit -->|persist| DB
+    Emit -->|broadcast| WS
+    Runner -->|persist run| DB
+    Mem -->|read/write| DB
+    API -->|read/write| DB
+
+    WS -->|stream events| Browser
+    Runner -->|reply text| Telegram
 ```
 
 ### Why these choices
