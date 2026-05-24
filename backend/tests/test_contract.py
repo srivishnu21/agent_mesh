@@ -7,6 +7,9 @@ os.environ["ANTHROPIC_API_KEY"] = "test-key"
 os.environ["REQUIRE_ANTHROPIC_ON_STARTUP"] = "false"
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["TELEGRAM_MODE"] = "polling"
+os.environ["AUTH_USERNAME"] = ""
+os.environ["AUTH_PASSWORD"] = ""
+os.environ["AUTH_SECRET"] = ""
 Path("test_contract.db").unlink(missing_ok=True)
 
 from fastapi.testclient import TestClient  # noqa: E402

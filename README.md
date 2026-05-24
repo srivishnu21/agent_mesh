@@ -1,6 +1,6 @@
 # AI Agent Orchestration Platform
 
-Agent Mesh is a local-first platform for configuring agents, wiring them into LangGraph workflows, and watching runs stream live from the browser or Telegram. Four workflow templates ship out of the box (sequential support triage, research → summarize, conditional Smart Router, and a Draft & Review feedback loop), with rolling per-conversation memory and PII guardrails enforced at the runtime level.
+Agent Mesh is a local-first platform for configuring agents, wiring them into LangGraph workflows, and watching runs stream live from the browser or Telegram. Four workflow templates ship out of the box (sequential support triage, research → summarize, conditional Smart Router, and a Draft & Review feedback loop), with rolling per-conversation memory, PII guardrails, agent skills, workflow interaction rules, and cron-based scheduling enforced at the runtime level.
 
 ## Demo
 
@@ -34,6 +34,7 @@ cp backend/.env.example backend/.env
 # Required: OPENAI_COMPATIBLE_API_KEY
 # Optional: TAVILY_API_KEY (web_search falls back to DuckDuckGo if blank)
 # Optional: TELEGRAM_BOT_TOKEN + TELEGRAM_DEFAULT_WORKFLOW_ID for the Telegram path
+# Optional: AUTH_USERNAME + AUTH_PASSWORD + AUTH_SECRET to enable login
 docker compose up --build
 ```
 
@@ -119,10 +120,22 @@ TELEGRAM_MODE=polling
 
 For webhook deployments, set `TELEGRAM_MODE=webhook`, set `TELEGRAM_WEBHOOK_URL` to a public HTTPS URL, and configure Telegram to POST to `/api/v1/telegram/webhook`.
 
+## Auth Setup
+
+Auth is disabled by default for local demos. To enable the static-user login screen, set all three values and restart the backend:
+
+```env
+AUTH_USERNAME=admin
+AUTH_PASSWORD=change-me
+AUTH_SECRET=use-a-long-random-string
+```
+
+The frontend stores a 7-day HMAC-signed bearer token in `localStorage` and attaches it to protected API calls and run WebSocket URLs. Public endpoints remain `/health`, `/api/v1/auth/*`, and the Telegram webhook.
+
 ## Running The Demo
 
 1. Open `http://localhost:3000` and confirm the dashboard metrics, 7-day token trend, and per-agent spend table all render.
-2. Open `/agents` and review the seeded agents (Triage, Support Specialist, Researcher, Summarizer, Orchestrator, Smart Router Triage, Billing/Technical/General Specialists).
+2. Open `/agents` and review the seeded agents (Triage, Support Specialist, Researcher, Summarizer, Orchestrator, Smart Router Triage, Billing/Technical/General Specialists). Each agent shows its skill chips and assigned tools.
 3. Open `/workflows`, edit any template, and confirm React Flow renders the graph. `Smart Router` is the conditional-edge demo and `Customer Support Triage` is the Telegram default.
 4. Run **Customer Support Triage** with an order question:
 
@@ -142,16 +155,64 @@ For webhook deployments, set `TELEGRAM_MODE=webhook`, set `TELEGRAM_WEBHOOK_URL`
 7. Watch `/runs/{id}` stream every event type: `run_started`, `node_started`, `llm_call`, `tool_call`, `tool_result`, `agent_message`, `guardrail_triggered`, `memory_updated` (Telegram only), `node_completed`, `run_completed`.
 8. Open [`@agent_mesh_poc_bot`](https://t.me/agent_mesh_poc_bot), send `/start` to see instructions, then send `/workflows` and pick a workflow. After selection, send a normal chat message; the selected workflow runs and replies in Telegram. Open `/conversations`, click the Telegram conversation, and use the `View run` link on the agent reply. Send a second message in the same chat to see the rolling summary picked up.
 
+## Agent Skills
+
+Each agent carries a `config.skills` array of free-form capability labels (e.g. `["copywriting", "summarization", "routing"]`). Skills are:
+
+- Displayed as violet chips in the Agents table and on the React Flow node inside the workflow editor.
+- Editable in the agent form (Skills field — comma-separated, parsed on save).
+- Stored in `agent.config.skills` (JSON column) and returned by `GET /api/v1/agents`.
+
+Skills are intentionally open-ended — they are not enforced by the runtime; they exist for documentation, visual clarity in the editor, and future routing/matching logic.
+
+## Workflow Interaction Rules
+
+Each workflow graph carries a `config.interaction_rules` object that controls how the LangGraph runtime bounds a run:
+
+```json
+{
+  "max_iterations_per_agent": 3,
+  "max_total_steps": 25
+}
+```
+
+- `max_iterations_per_agent` — maximum LLM retries an agent node makes before giving up (default 3). Prevents a single agent from looping on tool errors indefinitely.
+- `max_total_steps` — maps directly to LangGraph's `recursion_limit` (default 25). Caps the total number of graph steps across all nodes in a single run, which is the hard bound for feedback loops.
+
+Both values are editable from the workflow editor's **Interaction rules** panel (amber section in the right-hand inspector when no node or edge is selected).
+
+## Workflow Scheduling
+
+Each workflow can be given a cron schedule via `graph.config.schedule`:
+
+```json
+{
+  "enabled": true,
+  "cron": "0 9 * * *",
+  "input": "Run the daily summary.",
+  "timezone": "UTC"
+}
+```
+
+The backend runs an `APScheduler AsyncIOScheduler` that registers one job per enabled workflow on startup and after any workflow PATCH. Scheduled runs insert a `Run` row with `trigger.source = "schedule"` and fire through the same `execute_run` path as manual and Telegram triggers.
+
+The schedule is editable from the workflow editor's **Schedule** panel (sky-blue section in the right-hand inspector).
+
 ## What's Implemented Vs Stubbed
 
 | Area | Status |
 | --- | --- |
 | Agent CRUD | Implemented |
+| Agent skills (capability labels) | Implemented |
 | Workflow CRUD | Implemented |
 | Visual workflow builder | Implemented with React Flow |
 | Conditional edges / routing | Implemented (see `Smart Router` template) |
+| Feedback loop edges | Implemented (purple double-arrow, `ui.feedback: true`) |
+| Workflow interaction rules | Implemented (`max_iterations_per_agent`, `max_total_steps`) |
+| Workflow cron scheduling | Implemented (APScheduler, `graph.config.schedule`) |
 | LangGraph runtime | Implemented |
 | Claude / OpenAI agent calls | Implemented |
+| Runtime error classification | Implemented (9 categories: auth, rate_limit, context_length, tool, timeout, output, graph, budget, unknown) |
 | `order_lookup` tool | Implemented deterministic demo tool |
 | `web_search` tool | Implemented (Tavily preferred, DDG fallback chain) |
 | PII guardrails | Implemented (`guardrails.pii: redact` on agent config) |
@@ -161,19 +222,41 @@ For webhook deployments, set `TELEGRAM_MODE=webhook`, set `TELEGRAM_WEBHOOK_URL`
 | Telegram webhook route | Implemented, production path only |
 | Conversations transcript | Implemented |
 | Dashboard metrics + spend trend | Implemented (7-day token trend + per-agent cost) |
-| Auth and multi-tenancy | Stubbed/deferred |
+| Static-user auth | Implemented (optional, env-gated) |
+| Delete workflow | Implemented (with `?force=true` cascade) |
+| Multi-tenancy | Stubbed/deferred |
 | Slack/WhatsApp | Stubbed/deferred (see [docs/EXTENDING.md](docs/EXTENDING.md)) |
 | RAG/vector DB | Stubbed/deferred |
-| Scheduling | Stubbed/deferred |
+
+## Runtime Error Classification
+
+When a run fails, the runtime classifies the exception into one of nine categories and surfaces a structured error event with a human-readable hint:
+
+| Category | Trigger | Example hint |
+| --- | --- | --- |
+| `auth` | 401/403 from LLM provider | Check API key. |
+| `rate_limit` | 429 / rate limit text | Reduce concurrency or upgrade quota. |
+| `context_length` | 400 + context/token overflow text | Shorten system prompt or input. |
+| `tool` | Tool call raised an exception | Check tool configuration. |
+| `timeout` | asyncio/httpx timeout | Increase timeout or retry. |
+| `output` | Empty or missing agent output | Agent produced no text; check prompt. |
+| `graph` | LangGraph recursion limit hit | Increase max_total_steps or add exit. |
+| `budget` | Token budget exceeded | Reduce input or increase budget. |
+| `unknown` | Anything else | (raw exception message) |
+
+The `run_completed` (with `status: failed`) event carries `category`, `message`, and `hint` so the run timeline can display a color-coded card instead of a raw stack trace.
 
 ## Project Structure
 
-- `backend/app/main.py` — FastAPI bootstrap (router mount, DB init, seed, Telegram lifecycle).
-- `backend/app/api/` — REST routers: `agents`, `workflows`, `runs`, `conversations`, `telegram`, `stats`.
+- `backend/app/main.py` — FastAPI bootstrap (router mount, DB init, seed, Telegram lifecycle, scheduler lifecycle).
+- `backend/app/api/` — REST routers: `agents`, `workflows`, `runs`, `conversations`, `telegram`, `stats`, `auth`.
+- `backend/app/auth.py` — HMAC-SHA256 token creation/verification, `get_current_user` dependency.
+- `backend/app/scheduler.py` — APScheduler cron job registration and reload.
 - `backend/app/integrations/telegram_bot.py` — shared Telegram polling + webhook handling (forwards `conversation_id` into the runner for memory).
 - `backend/app/runtime/` — workflow runtime:
-  - `graph_builder.py` — LangGraph `StateGraph` build, conditional edges, route extraction.
-  - `workflow_runner.py` — Run lifecycle, memory summarization, event totals.
+  - `graph_builder.py` — LangGraph `StateGraph` build, conditional edges, route extraction, `max_iterations_per_agent` enforcement.
+  - `workflow_runner.py` — Run lifecycle, memory summarization, event totals, error classification.
+  - `errors.py` — `ClassifiedError` dataclass + `classify(exc)` function (9 categories).
   - `tools.py` — tool implementations + `TOOL_REGISTRY` (web_search, order_lookup, sql_query, calculator, send_email).
   - `guardrails.py` — PII redaction.
   - `memory.py` — rolling-summary read/write.
@@ -181,15 +264,11 @@ For webhook deployments, set `TELEGRAM_MODE=webhook`, set `TELEGRAM_WEBHOOK_URL`
 - `backend/app/models/` — SQLAlchemy models (`agents`, `workflows`, `runs`, `run_events`, `conversations`, `messages`, `conversation_memories`).
 - `backend/app/schemas/` — Pydantic request/response models.
 - `backend/alembic/versions/` — schema migrations (`0001` initial → `0003` memory + guardrail event types).
-- `backend/tests/` — `test_contract.py` (REST + WebSocket) and `test_runtime.py` (graph build, tools, guardrails, routing, memory).
-- `frontend/app/` — Next.js App Router pages (dashboard, agents, workflows, runs, conversations, settings).
-- `frontend/components/workflow/` — React Flow nodes, palette, edge styling.
-- `frontend/lib/api-client.ts` — typed fetch wrapper.
+- `backend/tests/` — `test_contract.py` (REST + WebSocket) and `test_runtime.py` (graph build, tools, guardrails, routing, memory, interaction rules, scheduler, error classification).
+- `frontend/app/` — Next.js App Router pages (dashboard, agents, workflows, runs, conversations, login, settings).
+- `frontend/components/workflow/` — React Flow nodes (agent chips + skill pills), palette, edge styling, node/edge inspector.
+- `frontend/lib/api-client.ts` — typed fetch wrapper with auth token attachment and 401 redirect.
 - `docs/EXTENDING.md` — how to add tools, templates, channels, guardrails.
-
-## Extending The Platform
-
-See [docs/EXTENDING.md](docs/EXTENDING.md) for how to add new tools, workflow templates, messaging channels, and guardrails. The Smart Router template demonstrates conditional edges; the Telegram integration is the reference channel adapter.
 
 ## Conditional Edges
 
@@ -236,14 +315,14 @@ cd backend
 PYTHONPATH=. pytest
 ```
 
-The end-to-end `test_run_completes_end_to_end` is marked `integration` and skips unless a real LLM API key is set (`ANTHROPIC_API_KEY` for the Anthropic path, or a working `OPENAI_COMPATIBLE_API_KEY` env for the OpenAI-compatible path). Unit coverage includes graph build, PII redaction, route extraction, conditional routing, and memory injection.
+The end-to-end `test_run_completes_end_to_end` is marked `integration` and skips unless a real LLM API key is set (`ANTHROPIC_API_KEY` for the Anthropic path, or a working `OPENAI_COMPATIBLE_API_KEY` env for the OpenAI-compatible path). Unit coverage includes graph build, PII redaction, route extraction, conditional routing, memory injection, interaction rules propagation, scheduler schedule extraction, and all 9 error classification categories.
 
 ## Production Roadmap
 
-- Add auth, workspaces, and tenant isolation.
+- Replace static-user auth with workspace-aware auth, roles, and tenant isolation.
 - Move WebSocket fanout to Redis for multi-replica deployments.
 - Add a vector database only when an agent actually needs RAG.
-- Add agent scheduling (cron / interval triggers via APScheduler).
+- Add richer schedule management UI (calendar view, pause/resume history, retry policy).
 - Add tracing (OpenTelemetry) for model latency and per-tool spans.
 - Add secrets management for channel tokens and provider keys.
 - Add durable background workers if runs need to outlive the API process.

@@ -65,6 +65,7 @@ export default function AgentsPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<AgentCreate>(emptyForm);
+  const [skillsText, setSkillsText] = useState("");
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.listAgents() });
@@ -116,19 +117,26 @@ export default function AgentsPage() {
   function openCreate() {
     setEditingAgent(null);
     setForm(emptyForm);
+    setSkillsText("");
     setOpen(true);
   }
 
   function openEdit(agent: Agent) {
     setEditingAgent(agent);
     setForm(agentToForm(agent));
+    setSkillsText(((agent.config?.skills as string[] | undefined) ?? []).join(", "));
     setOpen(true);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (editingAgent) updateAgent.mutate({ id: editingAgent.id, payload: form });
-    else createAgent.mutate(form);
+    const skills = skillsText
+      .split(",")
+      .map((skill) => skill.trim())
+      .filter(Boolean);
+    const payload: AgentCreate = { ...form, config: { ...form.config, skills } };
+    if (editingAgent) updateAgent.mutate({ id: editingAgent.id, payload });
+    else createAgent.mutate(payload);
   }
 
   function toggleTool(name: string) {
@@ -294,13 +302,14 @@ export default function AgentsPage() {
           <label className="space-y-1 text-sm">
             <span>Skills (comma-separated)</span>
             <Input
-              value={((form.config?.skills as string[] | undefined) ?? []).join(", ")}
-              onChange={(event) => {
-                const skills = event.target.value
+              value={skillsText}
+              onChange={(event) => setSkillsText(event.target.value)}
+              onBlur={() => {
+                const skills = skillsText
                   .split(",")
                   .map((skill) => skill.trim())
                   .filter(Boolean);
-                setForm({ ...form, config: { ...form.config, skills } });
+                setForm((current) => ({ ...current, config: { ...current.config, skills } }));
               }}
               placeholder="copywriting, summarization, routing"
             />
