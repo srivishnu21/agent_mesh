@@ -1,6 +1,26 @@
 import type { Agent, AgentCreate, Conversation, DashboardStats, Message, Model, Run, RunEvent, Tool, Workflow, WorkflowCreate } from "./types";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/**
+ * Resolve the backend base URL.
+ *
+ * Priority:
+ *  1. `NEXT_PUBLIC_API_URL` — baked at build time (use for prod with fixed host).
+ *  2. Runtime: derive from `window.location` so the browser hits the same host
+ *     on port 8000. Lets a single image work on localhost, a VM external IP,
+ *     or any reverse-proxied hostname without rebuilding.
+ *  3. SSR fallback: `http://backend:8000` (Docker network) for any server-side
+ *     fetch during Next.js render.
+ */
+function resolveApiUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl) return envUrl;
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://backend:8000";
+}
+
+export const API_URL = resolveApiUrl();
 
 export const TOKEN_KEY = "am_token";
 export const USER_KEY = "am_user";

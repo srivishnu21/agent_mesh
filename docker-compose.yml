@@ -31,8 +31,10 @@ services:
 
   frontend:
     build: ./frontend
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+    # NEXT_PUBLIC_API_URL is intentionally unset — api-client.ts resolves
+    # the backend URL at runtime from window.location.hostname so the same
+    # image works on localhost, a VM external IP, or a reverse-proxied host
+    # without rebuilding. Set it here only if you need to override.
     volumes:
       - ./frontend:/app
       - /app/node_modules
