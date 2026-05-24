@@ -3,9 +3,10 @@ from collections import defaultdict
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 
+from app.auth import auth_enabled, verify_token
 from app.db import SessionLocal
 from app.models.entities import RunEvent
 
@@ -70,7 +71,16 @@ async def replay_history(run_id: UUID, websocket: WebSocket) -> None:
 
 
 @router.websocket("/ws/runs/{run_id}")
-async def run_events_socket(websocket: WebSocket, run_id: UUID) -> None:
+async def run_events_socket(
+    websocket: WebSocket,
+    run_id: UUID,
+    token: str | None = Query(default=None),
+) -> None:
+    if auth_enabled():
+        if not token or not verify_token(token):
+            # WebSocket auth-failure code per RFC 6455 application-range convention.
+            await websocket.close(code=4401)
+            return
     run_key = str(run_id)
     await ws_manager.connect(run_key, websocket)
     await replay_history(run_id, websocket)

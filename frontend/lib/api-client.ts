@@ -2,14 +2,48 @@ import type { Agent, AgentCreate, Conversation, DashboardStats, Message, Model, 
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export const TOKEN_KEY = "am_token";
+export const USER_KEY = "am_user";
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(TOKEN_KEY);
+}
+
+export function setSession(token: string, username: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TOKEN_KEY, token);
+  window.localStorage.setItem(USER_KEY, username);
+}
+
+export function clearSession(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(USER_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...init?.headers
     }
   });
+
+  if (response.status === 401) {
+    clearSession();
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
+    throw new Error("401 Unauthorized");
+  }
 
   if (!response.ok) {
     const body = await response.text();
@@ -30,6 +64,13 @@ const qs = (params: Record<string, string | number | boolean | undefined>) => {
 };
 
 export const api = {
+  authStatus: () => request<{ enabled: boolean }>("/api/v1/auth/status"),
+  login: (username: string, password: string) =>
+    request<{ token: string; username: string }>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password })
+    }),
+  me: () => request<{ username: string }>("/api/v1/auth/me"),
   health: () => request<{ status: string; db: string }>("/health"),
   createAgent: (payload: AgentCreate) => request<Agent>("/api/v1/agents", { method: "POST", body: JSON.stringify(payload) }),
   listAgents: (params: { limit?: number; offset?: number } = {}) => request<Agent[]>(`/api/v1/agents${qs(params)}`),
@@ -56,7 +97,11 @@ export const api = {
   telegramWebhook: (payload: Record<string, unknown>) => request<{ ok: boolean; conversation_id: string | null; message_id: string | null }>("/api/v1/telegram/webhook", { method: "POST", body: JSON.stringify(payload) })
 };
 
-export const wsRunUrl = (runId: string) => `${API_URL.replace(/^http/, "ws")}/ws/runs/${runId}`;
+export const wsRunUrl = (runId: string) => {
+  const token = getToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${API_URL.replace(/^http/, "ws")}/ws/runs/${runId}${query}`;
+};
 
 export async function triggerRun(workflowId: string, input: string) {
   return api.triggerRun(workflowId, input);

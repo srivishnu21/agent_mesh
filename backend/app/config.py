@@ -35,6 +35,10 @@ class Settings:
     TELEGRAM_MODE: str = getenv("TELEGRAM_MODE", "polling")
     TELEGRAM_WEBHOOK_URL: str | None = getenv("TELEGRAM_WEBHOOK_URL")
     TELEGRAM_DEFAULT_WORKFLOW_ID: str | None = getenv("TELEGRAM_DEFAULT_WORKFLOW_ID")
+    AUTH_USERNAME: str = getenv("AUTH_USERNAME", "")
+    AUTH_PASSWORD: str = getenv("AUTH_PASSWORD", "")
+    AUTH_SECRET: str = getenv("AUTH_SECRET", "")
+    CORS_ALLOW_ORIGINS: str = getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 
     def validate_startup(self) -> None:
         if self.LLM_PROVIDER == "anthropic" and self.REQUIRE_ANTHROPIC_ON_STARTUP and not self.ANTHROPIC_API_KEY:

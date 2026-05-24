@@ -4,6 +4,7 @@ import { Activity, Bot, GitBranch, LayoutDashboard, MessageSquare, Settings, Wor
 
 import "./globals.css";
 import { Providers } from "./providers";
+import { SessionBadge } from "@/components/session-badge";
 
 export const metadata: Metadata = {
   title: "Agent Mesh",
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </Link>
                 ))}
               </nav>
+              <SessionBadge />
             </aside>
             <main className="min-w-0 p-6">{children}</main>
           </div>
