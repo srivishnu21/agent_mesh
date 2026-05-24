@@ -67,6 +67,7 @@ export default function AgentsPage() {
   const [form, setForm] = useState<AgentCreate>(emptyForm);
   const [skillsText, setSkillsText] = useState("");
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.listAgents() });
   const tools = useQuery({ queryKey: ["tools"], queryFn: () => api.listTools() });
@@ -221,28 +222,37 @@ export default function AgentsPage() {
                   </TD>
                   <TD onClick={(event) => event.stopPropagation()}>
                     <div className="relative flex justify-end">
-                      <Button className="h-8 w-8 border bg-background p-0 text-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                      <Button
+                        className="h-8 w-8 border bg-background p-0 text-foreground"
+                        onClick={() => setMenuOpenId(menuOpenId === agent.id ? null : agent.id)}
+                      >
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
-                      <div className="invisible absolute right-0 top-8 z-20 w-36 rounded-md border bg-background p-1 opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100">
-                        <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => openEdit(agent)}>
-                          <Pencil className="h-4 w-4" />
-                          Edit
-                        </button>
-                        <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => duplicateAgent.mutate(agent)}>
-                          <Copy className="h-4 w-4" />
-                          Duplicate
-                        </button>
-                        <button
-                          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
-                          onClick={() => {
-                            if (window.confirm(`Delete ${agent.name}?`)) deleteAgent.mutate(agent.id);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Delete
-                        </button>
-                      </div>
+                      {menuOpenId === agent.id && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
+                          <div className="absolute right-0 top-9 z-20 w-36 rounded-md border bg-background p-1 shadow-lg">
+                            <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => { setMenuOpenId(null); openEdit(agent); }}>
+                              <Pencil className="h-4 w-4" />
+                              Edit
+                            </button>
+                            <button className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => { setMenuOpenId(null); duplicateAgent.mutate(agent); }}>
+                              <Copy className="h-4 w-4" />
+                              Duplicate
+                            </button>
+                            <button
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
+                              onClick={() => {
+                                setMenuOpenId(null);
+                                if (window.confirm(`Delete ${agent.name}?`)) deleteAgent.mutate(agent.id);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </TD>
                 </TR>
