@@ -45,10 +45,12 @@ On first boot, the backend logs the seeded Customer Support Triage workflow id a
 
 ### Telegram Bot Commands
 
+Demo bot: [`@agent_mesh_poc_bot`](https://t.me/agent_mesh_poc_bot).
+
 Once polling is running, users can switch workflows per chat:
 
-- `/start` — welcome + workflow picker
-- `/workflows` — inline keyboard listing every seeded workflow; tap one to use it for this chat
+- `/start` — welcome message with setup instructions and workflow picker
+- `/workflows` — inline keyboard listing every seeded workflow; tap one to select it for this chat, then send normal messages to talk to that workflow
 - `/current` — show which workflow this chat is using (and whether the choice is per-chat or the server default)
 - `/help` — command list
 
@@ -138,7 +140,7 @@ For webhook deployments, set `TELEGRAM_MODE=webhook`, set `TELEGRAM_WEBHOOK_URL`
 
 6. Trigger the PII guardrail by including an email + phone in the user input — a `guardrail_triggered` event appears in the run timeline with `EMAIL`/`PHONE` counts.
 7. Watch `/runs/{id}` stream every event type: `run_started`, `node_started`, `llm_call`, `tool_call`, `tool_result`, `agent_message`, `guardrail_triggered`, `memory_updated` (Telegram only), `node_completed`, `run_completed`.
-8. Send a message to the configured Telegram bot. Open `/conversations`, click the Telegram conversation, and use the `View run` link on the agent reply. Send a second message in the same chat to see the rolling summary picked up.
+8. Open [`@agent_mesh_poc_bot`](https://t.me/agent_mesh_poc_bot), send `/start` to see instructions, then send `/workflows` and pick a workflow. After selection, send a normal chat message; the selected workflow runs and replies in Telegram. Open `/conversations`, click the Telegram conversation, and use the `View run` link on the agent reply. Send a second message in the same chat to see the rolling summary picked up.
 
 ## What's Implemented Vs Stubbed
 
