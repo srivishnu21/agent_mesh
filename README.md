@@ -333,7 +333,7 @@ cd backend
 PYTHONPATH=. pytest
 ```
 
-The end-to-end `test_run_completes_end_to_end` is marked `integration` and skips unless a real LLM API key is set (`ANTHROPIC_API_KEY` for the Anthropic path, or a working `OPENAI_COMPATIBLE_API_KEY` env for the OpenAI-compatible path). Unit coverage includes graph build, PII redaction, route extraction, conditional routing, memory injection, interaction rules propagation, scheduler schedule extraction, and all 9 error classification categories.
+The end-to-end `test_run_completes_end_to_end` is marked `integration` and skips unless a real LLM API key is set (`ANTHROPIC_API_KEY` for the Anthropic path, or a working `OPENAI_COMPATIBLE_API_KEY` env for the OpenAI-compatible path). Unit coverage includes graph build, PII redaction, route extraction, conditional routing, memory injection, interaction rules propagation, scheduler schedule extraction, all 9 error classification categories, and a Smart Router routing eval (`test_smart_router_routes_three_canonical_inputs`) that asserts the billing / technical / general decision for three representative inputs.
 
 ## Production Roadmap
 

@@ -222,6 +222,57 @@ def test_conditional_workflow_compiles(monkeypatch) -> None:
     assert compiled is not None
 
 
+def test_smart_router_routes_three_canonical_inputs() -> None:
+    """Eval: feed three representative user messages through the parse + route
+    pipeline that the Smart Router template uses in production, and assert each
+    one lands on the correct specialist.
+
+    This is a lightweight routing eval rather than an end-to-end LLM test — it
+    mirrors what the Triage Agent emits at the top of its reply (the ``ROUTE:``
+    line) and checks the runtime decision, isolated from LLM stochasticity.
+    Failure of any case means the conditional-edge plumbing is broken or
+    ``_extract_route`` is no longer parsing the contract Triage is trained on.
+    """
+    # Edge graph identical to the seeded Smart Router template:
+    # billing / technical specialists + a "general" catch-all.
+    edges = [
+        {"from": "triage", "to": "billing", "condition": {"route_equals": "billing"}},
+        {"from": "triage", "to": "technical", "condition": {"route_equals": "technical"}},
+        {"from": "triage", "to": "general", "condition": {"always": True}},
+    ]
+    router, _ = graph_builder._make_router(edges, default_target="general")
+
+    # Realistic triage outputs — ROUTE line plus a short rationale, the way a
+    # real LLM following the template prompt would respond.
+    cases = [
+        (
+            "billing",
+            "ROUTE: billing\nThe user reports a duplicate charge on invoice "
+            "INV-9012 and is requesting a refund.",
+        ),
+        (
+            "technical",
+            "ROUTE: technical\nIntegration error: /v1/orders returns 503. "
+            "Needs platform-side investigation.",
+        ),
+        (
+            "general",
+            "ROUTE: general\nAccount preference question, no payments or "
+            "platform errors involved.",
+        ),
+    ]
+
+    for expected, agent_reply in cases:
+        route = graph_builder._extract_route(agent_reply)
+        assert route == expected, f"_extract_route mis-parsed: {agent_reply!r} -> {route!r}"
+        target = router({"route": route})
+        assert target == expected, f"router picked {target!r} for ROUTE: {expected}"
+
+    # Bonus: empty / unrecognized route falls back to the catch-all.
+    assert router({}) == "general"
+    assert router({"route": "weather"}) == "general"
+
+
 def test_router_resolves_END_alias() -> None:
     from langgraph.graph import END
 
