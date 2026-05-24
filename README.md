@@ -4,7 +4,7 @@ Agent Mesh is a local-first platform for configuring agents, wiring them into La
 
 ## Demo
 
-Demo video: _(to be recorded — Loom/OBS link goes here)_.
+Demo video: [Watch the Agent Mesh walkthrough](https://drive.google.com/file/d/136SRRwGF5nNbo2ijOUDcOs2wRLKmQRJB/view?usp=sharing).
 
 Four pre-built workflow templates ship with the app:
 
