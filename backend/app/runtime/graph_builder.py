@@ -45,6 +45,46 @@ def _model_for_provider(agent: Agent) -> str:
     return model
 
 
+# Per-model `reasoning_effort` capability table.
+# Matched by longest-prefix so "gpt-5.2" wins over "gpt-5".
+# Values reflect OpenAI's published constraints; "minimal" is gpt-5 base only,
+# "xhigh" is gpt-5.2 only, "none" is 5.1/5.2 only.
+_REASONING_EFFORT_OPTIONS: dict[str, set[str]] = {
+    "gpt-5.2": {"none", "low", "medium", "high", "xhigh"},
+    "gpt-5.1": {"none", "low", "medium", "high"},
+    "gpt-5-nano": {"minimal", "low", "medium", "high"},
+    "gpt-5-mini": {"minimal", "low", "medium", "high"},
+    "gpt-5-codex": {"minimal", "low", "medium", "high"},
+    "gpt-5": {"minimal", "low", "medium", "high"},
+}
+
+_REASONING_EFFORT_DEFAULT: dict[str, str] = {
+    "gpt-5.2": "low",
+    "gpt-5.1": "low",
+    "gpt-5-nano": "minimal",
+    "gpt-5-mini": "minimal",
+    "gpt-5-codex": "minimal",
+    "gpt-5": "minimal",
+}
+
+
+def _resolve_reasoning_effort(model: str, requested: str | None) -> str | None:
+    """Pick a valid `reasoning_effort` for the model.
+
+    Returns the requested value if it's in the model's allowed set, otherwise
+    the model-specific default. Returns None if the model isn't in the table
+    (caller should omit the kwarg entirely).
+    """
+    for prefix in sorted(_REASONING_EFFORT_OPTIONS, key=len, reverse=True):
+        if model.startswith(prefix):
+            allowed = _REASONING_EFFORT_OPTIONS[prefix]
+            default = _REASONING_EFFORT_DEFAULT[prefix]
+            if requested and requested in allowed:
+                return requested
+            return default
+    return None
+
+
 def make_chat_model(agent: Agent, *, temperature: float | None = None, max_tokens: int | None = None):
     config = agent.config or {}
     model = _model_for_provider(agent)
@@ -59,7 +99,9 @@ def make_chat_model(agent: Agent, *, temperature: float | None = None, max_token
         }
         if model.startswith("gpt-5"):
             kwargs["max_completion_tokens"] = max(int(resolved_max_tokens), 2500)
-            kwargs["reasoning_effort"] = config.get("reasoning_effort", "minimal")
+            effort = _resolve_reasoning_effort(model, config.get("reasoning_effort"))
+            if effort is not None:
+                kwargs["reasoning_effort"] = effort
             kwargs["verbosity"] = config.get("verbosity", "medium")
         else:
             kwargs["temperature"] = resolved_temperature
