@@ -281,7 +281,7 @@ The `run_completed` (with `status: failed`) event carries `category`, `message`,
   - `event_emitter.py` — persist `RunEvent` + WebSocket broadcast.
 - `backend/app/models/` — SQLAlchemy models (`agents`, `workflows`, `runs`, `run_events`, `conversations`, `messages`, `conversation_memories`).
 - `backend/app/schemas/` — Pydantic request/response models.
-- `backend/alembic/versions/` — schema migrations (`0001` initial → `0003` memory + guardrail event types).
+- `backend/alembic/versions/` — schema migrations (`0001` initial schema → `0005` dashboard/run performance indexes).
 - `backend/tests/` — `test_contract.py` (REST + WebSocket) and `test_runtime.py` (graph build, tools, guardrails, routing, memory, interaction rules, scheduler, error classification).
 - `frontend/app/` — Next.js App Router pages (dashboard, agents, workflows, runs, conversations, login, settings).
 - `frontend/components/workflow/` — React Flow nodes (agent chips + skill pills), palette, edge styling, node/edge inspector.
