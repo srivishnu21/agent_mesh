@@ -44,6 +44,24 @@ docker compose up --build
 
 On first boot, the backend logs the seeded Customer Support Triage workflow id and writes it to `backend/.telegram_workflow_id`. Copy that value into `backend/.env` as `TELEGRAM_DEFAULT_WORKFLOW_ID`, then restart the backend to enable Telegram routing.
 
+### GCP VM Performance Notes
+
+For an `e2-medium`, keep the stack in production mode:
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+The frontend image uses Next.js standalone output, and the backend image runs Uvicorn without `--reload`. Keep a single backend process for this demo because Telegram polling and APScheduler run inside the API process; scaling workers without splitting those services can duplicate polling or scheduled jobs.
+
+If the UI still feels slow, check these first:
+
+- Use a nearby GCP region for your reviewers and for outbound LLM calls.
+- Keep Postgres on the same VM for the demo, or move it to Cloud SQL only if the VM is CPU/memory constrained.
+- Watch `docker stats`; if memory is tight, upgrade temporarily to `e2-standard-2` for the demo window.
+- Avoid open run pages during heavy workflow execution if the VM is pegged; WebSocket streaming and LLM calls share the same small CPU.
+
 ### Telegram Bot Commands
 
 Demo bot: [`@agent_mesh_poc_bot`](https://t.me/agent_mesh_poc_bot).

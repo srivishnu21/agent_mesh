@@ -81,10 +81,10 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id"), nullable=False)
-    status: Mapped[RunStatus] = mapped_column(Enum(RunStatus), default=RunStatus.pending, nullable=False)
+    workflow_id: Mapped[UUID] = mapped_column(ForeignKey("workflows.id"), index=True, nullable=False)
+    status: Mapped[RunStatus] = mapped_column(Enum(RunStatus), default=RunStatus.pending, index=True, nullable=False)
     trigger: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"), nullable=False)
@@ -98,14 +98,14 @@ class RunEvent(Base):
     __tablename__ = "run_events"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    run_id: Mapped[UUID] = mapped_column(ForeignKey("runs.id"), nullable=False)
-    agent_id: Mapped[UUID | None] = mapped_column(ForeignKey("agents.id"), nullable=True)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("runs.id"), index=True, nullable=False)
+    agent_id: Mapped[UUID | None] = mapped_column(ForeignKey("agents.id"), index=True, nullable=True)
     event_type: Mapped[RunEventType] = mapped_column(Enum(RunEventType), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
     )
 
     run: Mapped[Run] = relationship(back_populates="events")
