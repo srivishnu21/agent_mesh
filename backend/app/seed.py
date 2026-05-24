@@ -267,7 +267,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=ORCHESTRATOR_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=["web_search", "sql_query"],
-        config={"temperature": 0.15, "memory_enabled": True, "max_tokens": 900},
+        config={
+            "temperature": 0.15,
+            "memory_enabled": True,
+            "max_tokens": 900,
+            "skills": ["routing", "synthesis", "tool_use"],
+        },
         channels=["telegram", "internal"],
     )
     triage = await _upsert_agent(
@@ -277,7 +282,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=TRIAGE_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=[],
-        config={"temperature": 0.2, "memory_enabled": True, "guardrails": {"pii": "redact"}},
+        config={
+            "temperature": 0.2,
+            "memory_enabled": True,
+            "guardrails": {"pii": "redact"},
+            "skills": ["intent_classification", "pii_redaction"],
+        },
         channels=["telegram", "internal"],
     )
     specialist = await _upsert_agent(
@@ -287,7 +297,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=SPECIALIST_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=["web_search", "order_lookup"],
-        config={"temperature": 0.3, "memory_enabled": True, "max_tokens": 1200},
+        config={
+            "temperature": 0.3,
+            "memory_enabled": True,
+            "max_tokens": 1200,
+            "skills": ["customer_support", "order_lookup", "web_research"],
+        },
         channels=["internal"],
     )
     researcher = await _upsert_agent(
@@ -297,7 +312,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=RESEARCHER_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=["web_search"],
-        config={"temperature": 0.1, "memory_enabled": False, "force_tool": "web_search"},
+        config={
+            "temperature": 0.1,
+            "memory_enabled": False,
+            "force_tool": "web_search",
+            "skills": ["web_research", "source_gathering"],
+        },
         channels=["internal"],
     )
     summarizer = await _upsert_agent(
@@ -307,7 +327,11 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=SUMMARIZER_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=[],
-        config={"temperature": 0.2, "memory_enabled": False},
+        config={
+            "temperature": 0.2,
+            "memory_enabled": False,
+            "skills": ["summarization", "synthesis"],
+        },
         channels=["internal"],
     )
     router_triage = await _upsert_agent(
@@ -321,6 +345,7 @@ async def seed_if_empty(db: AsyncSession) -> None:
             "temperature": 0.1,
             "memory_enabled": True,
             "guardrails": {"pii": "redact"},
+            "skills": ["intent_classification", "routing", "pii_redaction"],
         },
         channels=["internal"],
     )
@@ -331,7 +356,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=BILLING_SPECIALIST_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=["order_lookup"],
-        config={"temperature": 0.2, "memory_enabled": True, "max_tokens": 900},
+        config={
+            "temperature": 0.2,
+            "memory_enabled": True,
+            "max_tokens": 900,
+            "skills": ["billing", "invoices", "refunds"],
+        },
         channels=["internal"],
     )
     technical_specialist = await _upsert_agent(
@@ -341,7 +371,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=TECHNICAL_SPECIALIST_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=["web_search", "order_lookup"],
-        config={"temperature": 0.3, "memory_enabled": True, "max_tokens": 1100},
+        config={
+            "temperature": 0.3,
+            "memory_enabled": True,
+            "max_tokens": 1100,
+            "skills": ["troubleshooting", "api_integration", "diagnostics"],
+        },
         channels=["internal"],
     )
     general_specialist = await _upsert_agent(
@@ -351,7 +386,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=GENERAL_SPECIALIST_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=["web_search"],
-        config={"temperature": 0.3, "memory_enabled": True, "max_tokens": 900},
+        config={
+            "temperature": 0.3,
+            "memory_enabled": True,
+            "max_tokens": 900,
+            "skills": ["general_support", "faq", "account_help"],
+        },
         channels=["internal"],
     )
     drafter = await _upsert_agent(
@@ -361,7 +401,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=DRAFTER_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=[],
-        config={"temperature": 0.4, "memory_enabled": False, "max_tokens": 700},
+        config={
+            "temperature": 0.4,
+            "memory_enabled": False,
+            "max_tokens": 700,
+            "skills": ["copywriting", "drafting", "revision"],
+        },
         channels=["internal"],
     )
     reviewer = await _upsert_agent(
@@ -371,7 +416,12 @@ async def seed_if_empty(db: AsyncSession) -> None:
         system_prompt=REVIEWER_PROMPT,
         model=settings.DEFAULT_MODEL,
         tools=[],
-        config={"temperature": 0.2, "memory_enabled": False, "max_tokens": 500},
+        config={
+            "temperature": 0.2,
+            "memory_enabled": False,
+            "max_tokens": 500,
+            "skills": ["editorial_review", "quality_gate", "routing"],
+        },
         channels=["internal"],
     )
 

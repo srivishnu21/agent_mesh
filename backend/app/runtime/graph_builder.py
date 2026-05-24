@@ -207,13 +207,20 @@ def _apply_guardrails_to_messages(messages, agent, session, run_id):
     return scrubbed, triggered_events
 
 
-def make_agent_node(agent: Agent, session: AsyncSession, memory_blurb: str | None = None):
+def make_agent_node(
+    agent: Agent,
+    session: AsyncSession,
+    memory_blurb: str | None = None,
+    *,
+    max_iterations: int = 3,
+):
     tools = get_tools_for_agent(agent.tools or [])
     llm = make_chat_model(agent)
     if tools:
         llm = llm.bind_tools(tools)
     tool_map = {tool.name: tool for tool in tools}
     effective_system_prompt = inject_memory(agent.system_prompt, memory_blurb)
+    max_iter = max(1, int(max_iterations))
 
     async def node(state: WorkflowState) -> dict:
         run_id = UUID(state["run_id"])
@@ -254,7 +261,7 @@ def make_agent_node(agent: Agent, session: AsyncSession, memory_blurb: str | Non
             )
             messages.append(HumanMessage(content=tool_context))
 
-        for iteration in range(1, 4):
+        for iteration in range(1, max_iter + 1):
             await emit(
                 session,
                 run_id,
@@ -385,6 +392,9 @@ async def build_graph_from_workflow(
     builder = StateGraph(WorkflowState)
     nodes = workflow.graph.get("nodes", [])
     edges = workflow.graph.get("edges", [])
+    workflow_config = workflow.graph.get("config", {}) or {}
+    interaction_rules = workflow_config.get("interaction_rules", {}) or {}
+    max_iterations_per_agent = int(interaction_rules.get("max_iterations_per_agent", 3))
 
     if not nodes:
         raise ValueError("Workflow has no nodes")
@@ -398,7 +408,12 @@ async def build_graph_from_workflow(
         agent = agents_by_id[UUID(node["agent_id"])]
         builder.add_node(
             node["id"],
-            make_agent_node(agent, session, memory_blurb=memory_blurbs.get(agent.id)),
+            make_agent_node(
+                agent,
+                session,
+                memory_blurb=memory_blurbs.get(agent.id),
+                max_iterations=max_iterations_per_agent,
+            ),
         )
 
     # Sources = nodes with no incoming edge from another real node (ignoring END targets).

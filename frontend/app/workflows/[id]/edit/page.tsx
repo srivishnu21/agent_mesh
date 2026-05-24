@@ -23,7 +23,7 @@ import { toast } from "sonner";
 import { AgentNode } from "@/components/workflow/agent-node";
 import { AgentPalette } from "@/components/workflow/agent-palette";
 import { EndNode, END_ALIASES, END_NODE_ID } from "@/components/workflow/end-node";
-import { NodeInspector, type EdgeData } from "@/components/workflow/node-inspector";
+import { NodeInspector, type EdgeData, type WorkflowGraphConfig } from "@/components/workflow/node-inspector";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
@@ -58,6 +58,7 @@ type RawEdge = {
 type RawGraph = {
   nodes?: Array<{ id: string; agent_id: string; position?: { x: number; y: number } }>;
   edges?: RawEdge[];
+  config?: WorkflowGraphConfig;
 };
 
 const ROUTE_COLOR = "#d97706";
@@ -170,6 +171,7 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
   const [edges, setEdges] = useState<Edge<EdgeData>[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [graphConfig, setGraphConfig] = useState<WorkflowGraphConfig>({});
   const [dirty, setDirty] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [runInput, setRunInput] = useState("");
@@ -232,6 +234,7 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
 
         setNodes(hydratedNodes);
         setEdges(hydratedEdges);
+        setGraphConfig(graph.config ?? {});
       })
       .catch((error) => toast.error(error instanceof Error ? error.message : "Could not load workflow"));
   }, [params.id]);
@@ -431,10 +434,11 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
       return;
     }
     if (!workflow) return;
-    const graph = {
+    const graph: RawGraph = {
       nodes: nodes
         .filter((node) => node.id !== END_NODE_ID)
-        .map((node) => ({ id: node.id, agent_id: node.data.agent?.id, position: node.position })),
+        .map((node) => ({ id: node.id, agent_id: node.data.agent?.id ?? "", position: node.position })),
+      config: graphConfig,
       edges: edges.map((edge) => {
         const out: RawEdge = {
           from: edge.source,
@@ -540,12 +544,17 @@ export default function WorkflowEditor({ params }: { params: { id: string } }) {
         <Card className="overflow-auto p-3">
           <NodeInspector
             workflow={workflow}
+            graphConfig={graphConfig}
             selectedNode={selectedNode}
             selectedEdge={selectedEdge}
             nodes={nodes}
             edges={edges}
             onWorkflowChange={(patch) => {
               setWorkflow((current) => (current ? { ...current, ...patch } : current));
+              setDirty(true);
+            }}
+            onGraphConfigChange={(next) => {
+              setGraphConfig(next);
               setDirty(true);
             }}
             onRemoveNode={removeNode}

@@ -18,8 +18,9 @@ function toolChipClass(tool: string) {
 
 export function AgentNode({ data, selected }: { data: { agent?: Agent; flowRole?: FlowRole }; selected: boolean }) {
   const agent = data.agent;
+  const skills = (agent?.config?.skills as string[] | undefined) ?? [];
   return (
-    <div className={cn("min-w-[190px] rounded-md border-2 bg-white p-3 shadow-sm", selected ? "border-primary" : "border-border")}>
+    <div className={cn("min-w-[210px] rounded-md border-2 bg-white p-3 shadow-sm", selected ? "border-primary" : "border-border")}>
       <Handle type="target" position={Position.Left} />
       <div className="flex items-start justify-between gap-2">
         <div className="text-sm font-semibold">{agent?.name ?? "Missing agent"}</div>
@@ -34,7 +35,7 @@ export function AgentNode({ data, selected }: { data: { agent?: Agent; flowRole?
           </div>
         )}
       </div>
-      <div className="mt-1 max-w-[180px] text-xs text-muted-foreground">{agent?.role ?? "Agent config unavailable"}</div>
+      <div className="mt-1 max-w-[200px] text-xs text-muted-foreground">{agent?.role ?? "Agent config unavailable"}</div>
       {!!agent?.tools?.length && (
         <div className="mt-2 flex flex-wrap gap-1">
           {agent.tools.map((tool) => (
@@ -42,6 +43,18 @@ export function AgentNode({ data, selected }: { data: { agent?: Agent; flowRole?
               {tool}
             </span>
           ))}
+        </div>
+      )}
+      {!!skills.length && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {skills.slice(0, 4).map((skill) => (
+            <span key={skill} className="rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-800">
+              {skill}
+            </span>
+          ))}
+          {skills.length > 4 && (
+            <span className="text-[10px] text-muted-foreground">+{skills.length - 4}</span>
+          )}
         </div>
       )}
       <Handle type="source" position={Position.Right} />

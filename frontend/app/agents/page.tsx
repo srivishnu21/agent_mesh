@@ -167,6 +167,7 @@ export default function AgentsPage() {
                 <TH>Role</TH>
                 <TH>Model</TH>
                 <TH>Tools</TH>
+                <TH>Skills</TH>
                 <TH>Channels</TH>
                 <TH className="w-12" />
               </TR>
@@ -175,7 +176,7 @@ export default function AgentsPage() {
               {agents.isLoading &&
                 Array.from({ length: 4 }).map((_, index) => (
                   <TR key={index}>
-                    <TD colSpan={6}>
+                    <TD colSpan={7}>
                       <Skeleton className="h-6 w-full" />
                     </TD>
                   </TR>
@@ -192,6 +193,17 @@ export default function AgentsPage() {
                   <TD>
                     <div className="flex flex-wrap gap-1">
                       {agent.tools.length ? agent.tools.map((tool) => <Badge key={tool} className={toolChipClass(tool)}>{tool}</Badge>) : <span className="text-muted-foreground">None</span>}
+                    </div>
+                  </TD>
+                  <TD>
+                    <div className="flex flex-wrap gap-1">
+                      {((agent.config?.skills as string[] | undefined) ?? []).length
+                        ? ((agent.config!.skills as string[])).map((skill) => (
+                            <Badge key={skill} className="border-violet-200 bg-violet-50 text-violet-800">
+                              {skill}
+                            </Badge>
+                          ))
+                        : <span className="text-muted-foreground">None</span>}
                     </div>
                   </TD>
                   <TD>
@@ -229,7 +241,7 @@ export default function AgentsPage() {
               ))}
               {!agents.isLoading && !agents.data?.length && (
                 <TR>
-                  <TD colSpan={6}>
+                  <TD colSpan={7}>
                     <EmptyState icon={Bot} message="No agents yet. Create one to start building workflows." action="New agent" onAction={openCreate} />
                   </TD>
                 </TR>
@@ -279,6 +291,23 @@ export default function AgentsPage() {
               ))}
             </div>
           </div>
+          <label className="space-y-1 text-sm">
+            <span>Skills (comma-separated)</span>
+            <Input
+              value={((form.config?.skills as string[] | undefined) ?? []).join(", ")}
+              onChange={(event) => {
+                const skills = event.target.value
+                  .split(",")
+                  .map((skill) => skill.trim())
+                  .filter(Boolean);
+                setForm({ ...form, config: { ...form.config, skills } });
+              }}
+              placeholder="copywriting, summarization, routing"
+            />
+            <span className="text-xs text-muted-foreground">
+              Free-form capability labels for this agent. Surfaced on the agent card and workflow node.
+            </span>
+          </label>
           <div className="space-y-2 text-sm">
             <span>Channels</span>
             <div className="grid grid-cols-3 gap-2">

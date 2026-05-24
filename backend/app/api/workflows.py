@@ -10,6 +10,7 @@ from app.models.entities import Conversation as ConversationModel
 from app.models.entities import Run as RunModel
 from app.models.entities import Workflow as WorkflowModel
 from app.runtime.workflow_runner import execute_run
+from app.scheduler import reload as reload_scheduler
 from app.schemas.contract import RunCreate, RunTriggerResponse, Workflow, WorkflowCreate, WorkflowUpdate
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -21,6 +22,7 @@ async def create_workflow(payload: WorkflowCreate, db: AsyncSession = Depends(ge
     db.add(workflow)
     await db.commit()
     await db.refresh(workflow)
+    await reload_scheduler()
     return workflow
 
 
@@ -55,6 +57,7 @@ async def update_workflow(workflow_id: UUID, payload: WorkflowUpdate, db: AsyncS
         setattr(workflow, key, value)
     await db.commit()
     await db.refresh(workflow)
+    await reload_scheduler()
     return workflow
 
 
@@ -93,6 +96,7 @@ async def delete_workflow(
 
     await db.delete(workflow)
     await db.commit()
+    await reload_scheduler()
 
 
 @router.post("/{workflow_id}/run", response_model=RunTriggerResponse, status_code=status.HTTP_201_CREATED)

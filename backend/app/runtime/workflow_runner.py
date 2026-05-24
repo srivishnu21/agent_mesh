@@ -77,7 +77,10 @@ async def execute_run(
             }
             if conversation_id is not None:
                 invocation_state["conversation_id"] = str(conversation_id)
-            final_state = await graph.ainvoke(invocation_state, {"recursion_limit": 25})
+            workflow_config = (workflow.graph or {}).get("config", {}) or {}
+            interaction_rules = workflow_config.get("interaction_rules", {}) or {}
+            max_total_steps = int(interaction_rules.get("max_total_steps", 25))
+            final_state = await graph.ainvoke(invocation_state, {"recursion_limit": max(1, max_total_steps)})
 
             events = (
                 await session.execute(select(RunEvent).where(RunEvent.run_id == run_id))

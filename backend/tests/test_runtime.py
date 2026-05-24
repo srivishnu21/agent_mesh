@@ -32,7 +32,7 @@ def test_graph_builder_single_source(monkeypatch) -> None:
     async def noop_node(state):
         return {"messages": []}
 
-    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None, **_: noop_node)
     first = Agent(id=uuid4(), name="A", role="A", system_prompt="A", model="test", tools=[], config={}, channels=[])
     second = Agent(id=uuid4(), name="B", role="B", system_prompt="B", model="test", tools=[], config={}, channels=[])
     workflow = SimpleNamespace(
@@ -49,7 +49,7 @@ def test_graph_builder_rejects_multiple_sources(monkeypatch) -> None:
     async def noop_node(state):
         return {"messages": []}
 
-    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None, **_: noop_node)
     first = Agent(id=uuid4(), name="A", role="A", system_prompt="A", model="test", tools=[], config={}, channels=[])
     second = Agent(id=uuid4(), name="B", role="B", system_prompt="B", model="test", tools=[], config={}, channels=[])
     workflow = SimpleNamespace(
@@ -194,7 +194,7 @@ def test_conditional_workflow_compiles(monkeypatch) -> None:
     async def noop_node(state):
         return {"messages": []}
 
-    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None, **_: noop_node)
     triage = Agent(id=uuid4(), name="Triage", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
     billing = Agent(id=uuid4(), name="Billing", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
     technical = Agent(id=uuid4(), name="Tech", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
@@ -238,7 +238,7 @@ def test_feedback_loop_workflow_compiles(monkeypatch) -> None:
     async def noop_node(state):
         return {"messages": []}
 
-    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None: noop_node)
+    monkeypatch.setattr(graph_builder, "make_agent_node", lambda _agent, _session, memory_blurb=None, **_: noop_node)
     drafter = Agent(id=uuid4(), name="Drafter", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
     reviewer = Agent(id=uuid4(), name="Reviewer", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
     workflow = SimpleNamespace(
@@ -257,6 +257,43 @@ def test_feedback_loop_workflow_compiles(monkeypatch) -> None:
     agents = {a.id: a for a in (drafter, reviewer)}
     compiled = anyio.run(graph_builder.build_graph_from_workflow, workflow, agents, None)
     assert compiled is not None
+
+
+def test_workflow_interaction_rules_passed_to_agent_node(monkeypatch) -> None:
+    """build_graph_from_workflow forwards graph.config.interaction_rules.max_iterations_per_agent."""
+    captured: dict = {}
+
+    async def noop_node(state):
+        return {"messages": []}
+
+    def fake_make_agent_node(_agent, _session, memory_blurb=None, *, max_iterations: int = 3):
+        captured["max_iterations"] = max_iterations
+        return noop_node
+
+    monkeypatch.setattr(graph_builder, "make_agent_node", fake_make_agent_node)
+    agent = Agent(id=uuid4(), name="A", role="r", system_prompt="p", model="test", tools=[], config={}, channels=[])
+    workflow = SimpleNamespace(
+        graph={
+            "nodes": [{"id": "n1", "agent_id": str(agent.id)}],
+            "edges": [],
+            "config": {"interaction_rules": {"max_iterations_per_agent": 7, "max_total_steps": 50}},
+        }
+    )
+    anyio.run(graph_builder.build_graph_from_workflow, workflow, {agent.id: agent}, None)
+    assert captured["max_iterations"] == 7
+
+
+def test_scheduler_extract_schedule_skips_when_disabled() -> None:
+    from app.scheduler import _extract_schedule
+
+    wf_off = SimpleNamespace(graph={"config": {"schedule": {"enabled": False, "cron": "0 9 * * *"}}})
+    wf_no_cron = SimpleNamespace(graph={"config": {"schedule": {"enabled": True, "cron": ""}}})
+    wf_on = SimpleNamespace(graph={"config": {"schedule": {"enabled": True, "cron": "0 9 * * *", "input": "x"}}})
+
+    assert _extract_schedule(wf_off) is None
+    assert _extract_schedule(wf_no_cron) is None
+    schedule = _extract_schedule(wf_on)
+    assert schedule and schedule["cron"] == "0 9 * * *" and schedule["input"] == "x"
 
 
 def test_memory_injection_appends_summary_to_system_prompt() -> None:

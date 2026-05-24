@@ -9,6 +9,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.db import SessionLocal, init_db
 from app.integrations.telegram_bot import start_polling, stop_polling
+from app.scheduler import start as start_scheduler, stop as stop_scheduler
 from app.schemas.contract import Health
 from app.seed import seed_if_empty
 from app.websocket import router as websocket_router
@@ -20,9 +21,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     async with SessionLocal() as db:
         await seed_if_empty(db)
+    await start_scheduler()
     await start_polling()
     yield
     await stop_polling()
+    await stop_scheduler()
 
 
 app = FastAPI(title="Agent Mesh API", version="0.1.0", lifespan=lifespan)

@@ -11,6 +11,19 @@ import { END_NODE_ID } from "@/components/workflow/end-node";
 export type EdgeCondition = { route_equals?: string; always?: boolean };
 export type EdgeData = { condition?: EdgeCondition; label?: string; feedback?: boolean };
 
+export type WorkflowGraphConfig = {
+  interaction_rules?: {
+    max_iterations_per_agent?: number;
+    max_total_steps?: number;
+  };
+  schedule?: {
+    enabled?: boolean;
+    cron?: string;
+    input?: string;
+    timezone?: string;
+  };
+};
+
 const FEEDBACK_DEFAULT_ROUTE = "revise";
 
 type AgentNodeData = { agent?: Agent };
@@ -23,20 +36,24 @@ function nodeLabel(node: Node<AgentNodeData> | undefined, fallback: string) {
 
 export function NodeInspector({
   workflow,
+  graphConfig,
   selectedNode,
   selectedEdge,
   nodes,
   onWorkflowChange,
+  onGraphConfigChange,
   onRemoveNode,
   onEdgeChange,
   onRemoveEdge
 }: {
   workflow: Workflow | null;
+  graphConfig: WorkflowGraphConfig;
   selectedNode: Node<AgentNodeData> | null;
   selectedEdge: Edge<EdgeData> | null;
   nodes: Node<AgentNodeData>[];
   edges: Edge<EdgeData>[];
   onWorkflowChange: (patch: Partial<Workflow>) => void;
+  onGraphConfigChange: (next: WorkflowGraphConfig) => void;
   onRemoveNode: (id: string) => void;
   onEdgeChange: (id: string, data: EdgeData) => void;
   onRemoveEdge: (id: string) => void;
@@ -177,6 +194,7 @@ export function NodeInspector({
 
   if (selectedNode?.data.agent) {
     const agent = selectedNode.data.agent;
+    const skills = (agent.config?.skills as string[] | undefined) ?? [];
     return (
       <div className="space-y-4">
         <div>
@@ -191,12 +209,36 @@ export function NodeInspector({
           <div className="font-medium">Tools</div>
           <div className="text-muted-foreground">{agent.tools.length ? agent.tools.join(", ") : "None"}</div>
         </div>
+        <div className="space-y-1 text-xs">
+          <div className="font-medium">Skills</div>
+          {skills.length ? (
+            <div className="flex flex-wrap gap-1">
+              {skills.map((skill) => (
+                <span key={skill} className="rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-800">
+                  {skill}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="text-muted-foreground">None — set on the agent in /agents.</div>
+          )}
+        </div>
         <Button className="w-full border bg-background text-foreground" onClick={() => onRemoveNode(selectedNode.id)}>
           <Trash2 className="mr-2 h-4 w-4" />
           Remove node
         </Button>
       </div>
     );
+  }
+
+  const rules = graphConfig.interaction_rules ?? {};
+  const schedule = graphConfig.schedule ?? {};
+
+  function updateRules(patch: Partial<NonNullable<WorkflowGraphConfig["interaction_rules"]>>) {
+    onGraphConfigChange({ ...graphConfig, interaction_rules: { ...rules, ...patch } });
+  }
+  function updateSchedule(patch: Partial<NonNullable<WorkflowGraphConfig["schedule"]>>) {
+    onGraphConfigChange({ ...graphConfig, schedule: { ...schedule, ...patch } });
   }
 
   return (
@@ -210,8 +252,83 @@ export function NodeInspector({
         <span>Description</span>
         <Textarea value={workflow?.description ?? ""} onChange={(event) => onWorkflowChange({ description: event.target.value })} />
       </label>
+
+      <div className="space-y-2 rounded-md border bg-amber-50/40 p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Interaction rules</div>
+        <label className="block space-y-1 text-xs">
+          <span className="font-medium">Max iterations per agent</span>
+          <Input
+            type="number"
+            min={1}
+            max={20}
+            value={rules.max_iterations_per_agent ?? ""}
+            placeholder="3"
+            onChange={(event) => {
+              const value = event.target.value ? Number(event.target.value) : undefined;
+              updateRules({ max_iterations_per_agent: value });
+            }}
+          />
+          <span className="text-[10px] text-muted-foreground">How many LLM turns each node may take while handling tool calls. Default 3.</span>
+        </label>
+        <label className="block space-y-1 text-xs">
+          <span className="font-medium">Max total steps</span>
+          <Input
+            type="number"
+            min={1}
+            max={200}
+            value={rules.max_total_steps ?? ""}
+            placeholder="25"
+            onChange={(event) => {
+              const value = event.target.value ? Number(event.target.value) : undefined;
+              updateRules({ max_total_steps: value });
+            }}
+          />
+          <span className="text-[10px] text-muted-foreground">Hard cap on graph node executions. Stops runaway feedback loops. Default 25.</span>
+        </label>
+      </div>
+
+      <div className="space-y-2 rounded-md border bg-sky-50/40 p-3">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold uppercase tracking-wide text-sky-800">Schedule</div>
+          <label className="flex items-center gap-1 text-xs">
+            <input
+              type="checkbox"
+              checked={!!schedule.enabled}
+              onChange={(event) => updateSchedule({ enabled: event.target.checked })}
+            />
+            <span>Enabled</span>
+          </label>
+        </div>
+        <label className="block space-y-1 text-xs">
+          <span className="font-medium">Cron expression</span>
+          <Input
+            value={schedule.cron ?? ""}
+            placeholder="0 9 * * *"
+            onChange={(event) => updateSchedule({ cron: event.target.value })}
+          />
+          <span className="text-[10px] text-muted-foreground">Standard 5-field cron. Example: <code className="rounded bg-muted px-1">0 9 * * *</code> runs daily at 09:00 in the configured timezone.</span>
+        </label>
+        <label className="block space-y-1 text-xs">
+          <span className="font-medium">Timezone</span>
+          <Input
+            value={schedule.timezone ?? ""}
+            placeholder="UTC"
+            onChange={(event) => updateSchedule({ timezone: event.target.value })}
+          />
+        </label>
+        <label className="block space-y-1 text-xs">
+          <span className="font-medium">Default input</span>
+          <Textarea
+            value={schedule.input ?? ""}
+            placeholder="Run the daily summary."
+            onChange={(event) => updateSchedule({ input: event.target.value })}
+          />
+          <span className="text-[10px] text-muted-foreground">Text sent as the run input on every scheduled fire.</span>
+        </label>
+      </div>
+
       <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-        Click any edge on the canvas to edit its condition (straight, conditional, or catch-all) and label.
+        Click any edge on the canvas to edit its condition. Click any node to inspect its agent.
       </div>
     </div>
   );
